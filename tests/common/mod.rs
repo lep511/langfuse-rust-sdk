@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use langfuse_sdk::{ClientConfig, LangfuseClient, RetryPolicy};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient, RetryPolicy};
 use serde_json::Value;
 use wiremock::{MockServer, Request, ResponseTemplate};
 

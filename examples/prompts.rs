@@ -5,9 +5,9 @@
 //!   cargo run --example prompts
 //! ```
 
-use langfuse_sdk::api::prompts::{GetPromptParams, ListPromptsParams};
-use langfuse_sdk::models::prompts::{ChatPromptMessage, CreatePromptRequest, Prompt};
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::api::prompts::{GetPromptParams, ListPromptsParams};
+use langfuse_rust_sdk::models::prompts::{ChatPromptMessage, CreatePromptRequest, Prompt};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

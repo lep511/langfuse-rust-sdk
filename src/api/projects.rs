@@ -1,3 +1,5 @@
+//! Project management and API key operations.
+
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};

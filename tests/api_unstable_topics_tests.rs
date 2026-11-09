@@ -3,8 +3,8 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::api::unstable_topics::*;
-use langfuse_sdk::models::unstable_topics::*;
+use langfuse_rust_sdk::api::unstable_topics::*;
+use langfuse_rust_sdk::models::unstable_topics::*;
 use serde_json::{Value, json};
 use wiremock::Mock;
 use wiremock::matchers::{method, path};

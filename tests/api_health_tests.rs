@@ -40,7 +40,7 @@ async fn health_check_503_maps_to_service_unavailable() {
 
     let err = client.health.check().await.unwrap_err();
     assert!(
-        matches!(err, langfuse_sdk::LangfuseError::ServiceUnavailable { ref message, .. } if message == "Database down"),
+        matches!(err, langfuse_rust_sdk::LangfuseError::ServiceUnavailable { ref message, .. } if message == "Database down"),
         "got {err:?}"
     );
 }

@@ -1,3 +1,5 @@
+//! Manage evaluator definitions and versions.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

@@ -1,3 +1,5 @@
+//! Submit end-user feedback.
+
 use std::sync::Arc;
 
 pub use crate::models::feedback::{

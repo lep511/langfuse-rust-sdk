@@ -1,3 +1,5 @@
+//! Prompt request and response types.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]

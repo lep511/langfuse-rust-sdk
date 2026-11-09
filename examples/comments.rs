@@ -11,10 +11,10 @@
 //!   cargo run --example comments
 //! ```
 
-use langfuse_sdk::api::comments::ListCommentsParams;
-use langfuse_sdk::api::observations::ListObservationsParams;
-use langfuse_sdk::models::comments::CreateCommentRequest;
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::api::comments::ListCommentsParams;
+use langfuse_rust_sdk::api::observations::ListObservationsParams;
+use langfuse_rust_sdk::models::comments::CreateCommentRequest;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

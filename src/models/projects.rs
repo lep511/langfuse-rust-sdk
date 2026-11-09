@@ -1,3 +1,5 @@
+//! Project response types.
+
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 

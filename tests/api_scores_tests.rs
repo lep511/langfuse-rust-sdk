@@ -1,8 +1,8 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::api::scores::ListScoresParams;
-use langfuse_sdk::models::scores::{
+use langfuse_rust_sdk::api::scores::ListScoresParams;
+use langfuse_rust_sdk::models::scores::{
     CreateScoreRequest, CreateScoreValue, CreateScoresResponse, ScoreV3,
 };
 use serde_json::json;

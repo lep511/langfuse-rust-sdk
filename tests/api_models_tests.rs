@@ -1,9 +1,9 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::models::enums::ModelUsageUnit;
-use langfuse_sdk::models::models_api::CreateModelRequest;
-use langfuse_sdk::pagination::PageParams;
+use langfuse_rust_sdk::models::enums::ModelUsageUnit;
+use langfuse_rust_sdk::models::models_api::CreateModelRequest;
+use langfuse_rust_sdk::pagination::PageParams;
 use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};

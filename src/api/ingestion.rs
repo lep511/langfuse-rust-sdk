@@ -1,3 +1,5 @@
+//! Batch ingestion of traces, spans, generations, scores and events.
+
 use std::sync::Arc;
 
 use reqwest::header::{HeaderMap, HeaderValue};

@@ -2,8 +2,8 @@
 //! every enum variant (plus the `Unknown` fallback), tagged-union variants and
 //! fields that need explicit renames.
 
-use langfuse_sdk::api::feedback::FeedbackTargetType;
-use langfuse_sdk::models::comments::CommentObjectType;
+use langfuse_rust_sdk::api::feedback::FeedbackTargetType;
+use langfuse_rust_sdk::models::comments::CommentObjectType;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -64,7 +64,7 @@ fn feedback_target_type_values() {
 
 #[test]
 fn annotation_queue_enums() {
-    use langfuse_sdk::models::annotation_queues::*;
+    use langfuse_rust_sdk::models::annotation_queues::*;
     assert_enum(
         &[
             (AnnotationQueueStatus::Pending, "PENDING"),
@@ -88,7 +88,7 @@ fn annotation_queue_enums() {
 
 #[test]
 fn blob_storage_enums() {
-    use langfuse_sdk::models::blob_storage_integrations::*;
+    use langfuse_rust_sdk::models::blob_storage_integrations::*;
     assert_enum(
         &[
             (BlobStorageIntegrationType::S3, "S3"),
@@ -194,7 +194,7 @@ fn blob_storage_enums() {
 
 #[test]
 fn evaluation_rule_filter_all_variants() {
-    use langfuse_sdk::models::evaluation_rules::*;
+    use langfuse_rust_sdk::models::evaluation_rules::*;
     use serde_json::json;
     let cases = [
         (
@@ -288,7 +288,7 @@ fn evaluation_rule_filter_all_variants() {
 
 #[test]
 fn evaluation_rule_operator_values() {
-    use langfuse_sdk::models::evaluation_rules::*;
+    use langfuse_rust_sdk::models::evaluation_rules::*;
     assert_serialized(&[
         (StringFilterOperator::Equals, "="),
         (StringFilterOperator::Contains, "contains"),
@@ -336,7 +336,7 @@ fn evaluation_rule_operator_values() {
 
 #[test]
 fn evaluation_common_enums() {
-    use langfuse_sdk::models::evaluation_common::*;
+    use langfuse_rust_sdk::models::evaluation_common::*;
     assert_serialized(&[
         (PromptVariableMappingSource::Input, "input"),
         (PromptVariableMappingSource::Output, "output"),
@@ -390,7 +390,7 @@ fn evaluation_common_enums() {
 
 #[test]
 fn public_api_error_with_validation_issues() {
-    use langfuse_sdk::models::evaluation_common::*;
+    use langfuse_rust_sdk::models::evaluation_common::*;
     let err: PublicApiError = serde_json::from_str(
         r#"{"message":"Invalid body","code":"invalid_body",
             "details":{"issues":[{"code":"invalid_type","message":"Expected string","path":["filter",0,"value"]}]}}"#,
@@ -409,7 +409,7 @@ fn public_api_error_with_validation_issues() {
 
 #[test]
 fn evaluator_enums() {
-    use langfuse_sdk::models::evaluators::*;
+    use langfuse_rust_sdk::models::evaluators::*;
     assert_enum(
         &[
             (EvaluatorStatus::Active, "active"),
@@ -436,7 +436,7 @@ fn evaluator_enums() {
 
 #[test]
 fn evaluator_output_definition_variants() {
-    use langfuse_sdk::models::evaluators::*;
+    use langfuse_rust_sdk::models::evaluators::*;
     use serde_json::json;
     let cases = [
         (json!({"dataType": "NUMERIC", "minValue": 0.0}), "NUMERIC"),
@@ -458,7 +458,7 @@ fn evaluator_output_definition_variants() {
 
 #[test]
 fn update_evaluator_description_null_vs_omitted() {
-    use langfuse_sdk::models::evaluators::*;
+    use langfuse_rust_sdk::models::evaluators::*;
     use serde_json::json;
     let clear = UpdateEvaluatorRequest::Metadata(UpdateEvaluatorMetadataRequest {
         name: Some("New".into()),
@@ -487,7 +487,7 @@ fn update_evaluator_description_null_vs_omitted() {
 
 #[test]
 fn update_llm_as_judge_request_has_type_tag() {
-    use langfuse_sdk::models::evaluators::*;
+    use langfuse_rust_sdk::models::evaluators::*;
     use serde_json::json;
     let req = UpdateEvaluatorRequest::LlmAsJudge(UpdateLlmAsJudgeEvaluatorRequest {
         name: None,
@@ -523,7 +523,7 @@ fn update_llm_as_judge_request_has_type_tag() {
 
 #[test]
 fn llm_adapter_values() {
-    use langfuse_sdk::models::llm_connections::LlmAdapter;
+    use langfuse_rust_sdk::models::llm_connections::LlmAdapter;
     assert_serialized(&[
         (LlmAdapter::Anthropic, "anthropic"),
         (LlmAdapter::Openai, "openai"),
@@ -536,7 +536,7 @@ fn llm_adapter_values() {
 
 #[test]
 fn upsert_llm_connection_minimal_body() {
-    use langfuse_sdk::models::llm_connections::*;
+    use langfuse_rust_sdk::models::llm_connections::*;
     let req = UpsertLlmConnectionRequest::new("bedrock", LlmAdapter::Bedrock, "key");
     assert_eq!(
         serde_json::to_value(&req).unwrap(),
@@ -550,7 +550,7 @@ fn upsert_llm_connection_minimal_body() {
 
 #[test]
 fn metrics_enums() {
-    use langfuse_sdk::models::metrics::*;
+    use langfuse_rust_sdk::models::metrics::*;
     assert_serialized(&[
         (MetricsView::Observations, "observations"),
         (MetricsView::ScoresNumeric, "scores-numeric"),
@@ -590,7 +590,7 @@ fn metrics_enums() {
 
 #[test]
 fn membership_role_values() {
-    use langfuse_sdk::models::organizations::MembershipRole;
+    use langfuse_rust_sdk::models::organizations::MembershipRole;
     assert_enum(
         &[
             (MembershipRole::Owner, "OWNER"),

@@ -1,3 +1,5 @@
+//! Query aggregated metrics.
+
 use std::sync::Arc;
 
 use serde::Serialize;

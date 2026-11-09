@@ -1,3 +1,5 @@
+//! SCIM 2.0 user provisioning.
+
 use std::sync::Arc;
 
 use serde::Serialize;

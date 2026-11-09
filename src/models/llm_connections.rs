@@ -1,3 +1,5 @@
+//! LLM connection request and response types.
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};

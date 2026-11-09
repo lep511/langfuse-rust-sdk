@@ -5,10 +5,10 @@
 //!   cargo run --example manage_models
 //! ```
 
-use langfuse_sdk::models::enums::ModelUsageUnit;
-use langfuse_sdk::models::models_api::CreateModelRequest;
-use langfuse_sdk::pagination::PageParams;
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::models::enums::ModelUsageUnit;
+use langfuse_rust_sdk::models::models_api::CreateModelRequest;
+use langfuse_rust_sdk::pagination::PageParams;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

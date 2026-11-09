@@ -1,8 +1,8 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::api::scim::ListScimUsersParams;
-use langfuse_sdk::models::scim::{CreateScimUserRequest, ScimEmail, ScimName};
+use langfuse_rust_sdk::api::scim::ListScimUsersParams;
+use langfuse_rust_sdk::models::scim::{CreateScimUserRequest, ScimEmail, ScimName};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};

@@ -1,3 +1,5 @@
+//! LLM model definition request and response types.
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};

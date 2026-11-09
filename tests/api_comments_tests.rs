@@ -1,10 +1,10 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::LangfuseError;
-use langfuse_sdk::api::comments::ListCommentsParams;
-use langfuse_sdk::api::feedback::{FeedbackTargetType, SubmitFeedbackRequest};
-use langfuse_sdk::models::comments::{CommentObjectType, CreateCommentRequest};
+use langfuse_rust_sdk::LangfuseError;
+use langfuse_rust_sdk::api::comments::ListCommentsParams;
+use langfuse_rust_sdk::api::feedback::{FeedbackTargetType, SubmitFeedbackRequest};
+use langfuse_rust_sdk::models::comments::{CommentObjectType, CreateCommentRequest};
 use serde_json::{Value, json};
 use wiremock::Mock;
 use wiremock::matchers::{body_json, method, path, query_param};

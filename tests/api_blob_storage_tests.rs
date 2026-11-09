@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::models::blob_storage_integrations::*;
+use langfuse_rust_sdk::models::blob_storage_integrations::*;
 use serde_json::{Value, json};
 use wiremock::Mock;
 use wiremock::matchers::{body_json, method, path};

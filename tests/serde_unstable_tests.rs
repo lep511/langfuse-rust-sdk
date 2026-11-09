@@ -31,7 +31,7 @@ fn assert_serialized<T: Serialize + std::fmt::Debug>(cases: &[(T, &str)]) {
 
 #[test]
 fn dashboard_widget_enums() {
-    use langfuse_sdk::models::unstable_dashboard_widgets::*;
+    use langfuse_rust_sdk::models::unstable_dashboard_widgets::*;
     assert_serialized(&[
         (DashboardWidgetView::Observations, "observations"),
         (DashboardWidgetView::ScoresNumeric, "scores-numeric"),
@@ -99,7 +99,7 @@ fn dashboard_widget_enums() {
 
 #[test]
 fn chart_config_input_type_is_optional() {
-    use langfuse_sdk::models::unstable_dashboard_widgets::*;
+    use langfuse_rust_sdk::models::unstable_dashboard_widgets::*;
     let input = DashboardWidgetChartConfigInput {
         r#type: Some(DashboardWidgetChartType::Histogram),
         bins: Some(20),
@@ -117,7 +117,7 @@ fn chart_config_input_type_is_optional() {
 
 #[test]
 fn widget_filter_roundtrip() {
-    use langfuse_sdk::models::unstable_common::DashboardWidgetFilter;
+    use langfuse_rust_sdk::models::unstable_common::DashboardWidgetFilter;
     let wire = json!({"column": "metadata", "operator": "=", "type": "stringObject", "value": "x", "key": "tier"});
     let filter: DashboardWidgetFilter = serde_json::from_value(wire.clone()).unwrap();
     assert_eq!(filter.key.as_deref(), Some("tier"));
@@ -130,7 +130,7 @@ fn widget_filter_roundtrip() {
 
 #[test]
 fn dashboard_placement_both_variants_roundtrip() {
-    use langfuse_sdk::models::unstable_dashboards::DashboardPlacement;
+    use langfuse_rust_sdk::models::unstable_dashboards::DashboardPlacement;
     let widget = json!({"type": "widget", "id": "a", "widgetId": "w", "x": 0, "y": 1, "width": 6, "height": 4});
     let preset = json!({"type": "preset", "id": "b", "presetId": "p", "x": 6, "y": 1, "width": 6, "height": 4});
     for wire in [widget, preset] {
@@ -143,7 +143,7 @@ fn dashboard_placement_both_variants_roundtrip() {
 
 #[test]
 fn create_placement_request_helpers() {
-    use langfuse_sdk::models::unstable_dashboards::CreateDashboardPlacementRequest;
+    use langfuse_rust_sdk::models::unstable_dashboards::CreateDashboardPlacementRequest;
     assert_eq!(
         serde_json::to_value(CreateDashboardPlacementRequest::preset("latency")).unwrap(),
         json!({"type": "preset", "presetId": "latency"})
@@ -156,7 +156,7 @@ fn create_placement_request_helpers() {
 
 #[test]
 fn topic_enums() {
-    use langfuse_sdk::models::unstable_topics::*;
+    use langfuse_rust_sdk::models::unstable_topics::*;
     assert_serialized(&[
         (TopicsOrderBy::TraceCountDesc, "traceCount.desc"),
         (TopicsOrderBy::TraceCountAsc, "traceCount.asc"),

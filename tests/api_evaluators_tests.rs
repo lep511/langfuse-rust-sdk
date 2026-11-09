@@ -1,12 +1,12 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::LangfuseError;
-use langfuse_sdk::models::evaluation_common::{
+use langfuse_rust_sdk::LangfuseError;
+use langfuse_rust_sdk::models::evaluation_common::{
     PromptVariableMappingInput, PromptVariableMappingSource, PublicApiError, PublicApiErrorCode,
 };
-use langfuse_sdk::models::evaluators::*;
-use langfuse_sdk::pagination::CursorParams;
+use langfuse_rust_sdk::models::evaluators::*;
+use langfuse_rust_sdk::pagination::CursorParams;
 use serde_json::{Value, json};
 use wiremock::Mock;
 use wiremock::matchers::{body_json, method, path, query_param};

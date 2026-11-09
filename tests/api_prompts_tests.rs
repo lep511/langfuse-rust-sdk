@@ -1,10 +1,10 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::api::prompt_version::UpdatePromptVersionRequest;
-use langfuse_sdk::api::prompts::{DeletePromptParams, GetPromptParams, ListPromptsParams};
-use langfuse_sdk::models::enums::PromptType;
-use langfuse_sdk::models::prompts::{ChatPromptMessage, CreatePromptRequest, Prompt};
+use langfuse_rust_sdk::api::prompt_version::UpdatePromptVersionRequest;
+use langfuse_rust_sdk::api::prompts::{DeletePromptParams, GetPromptParams, ListPromptsParams};
+use langfuse_rust_sdk::models::enums::PromptType;
+use langfuse_rust_sdk::models::prompts::{ChatPromptMessage, CreatePromptRequest, Prompt};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, ResponseTemplate};

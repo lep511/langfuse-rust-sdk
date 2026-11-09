@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::api::projects::{
+use langfuse_rust_sdk::api::projects::{
     CreateApiKeyRequest, CreateProjectRequest, UpdateProjectRequest,
 };
 use serde_json::{Value, json};

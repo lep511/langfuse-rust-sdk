@@ -1,3 +1,5 @@
+//! Create, list, update and delete scores.
+
 use std::sync::Arc;
 
 use serde::Serialize;

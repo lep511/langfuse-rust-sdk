@@ -13,20 +13,20 @@
 //!   cargo run --example evaluators
 //! ```
 
-use langfuse_sdk::models::evaluation_common::{
+use langfuse_rust_sdk::models::evaluation_common::{
     PromptVariableMappingInput, PromptVariableMappingSource, PublicApiError,
 };
-use langfuse_sdk::models::evaluation_rules::{
+use langfuse_rust_sdk::models::evaluation_rules::{
     CreateEvaluationRuleRequest, EvaluationRuleEvaluatorAssignmentInput, EvaluationRuleFilter,
     OptionsFilterOperator,
 };
-use langfuse_sdk::models::evaluators::{
+use langfuse_rust_sdk::models::evaluators::{
     CreateEvaluatorRequest, EvaluatorChatMessage, EvaluatorChatMessageRole,
     EvaluatorChatPromptInput, EvaluatorDefinition, EvaluatorOutputDefinition,
     UpdateEvaluatorMetadataRequest, UpdateEvaluatorRequest,
 };
-use langfuse_sdk::pagination::CursorParams;
-use langfuse_sdk::{ClientConfig, LangfuseClient, LangfuseError};
+use langfuse_rust_sdk::pagination::CursorParams;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError};
 
 type BoxError = Box<dyn std::error::Error>;
 

@@ -1,3 +1,5 @@
+//! Retrieve, create, update and delete prompts.
+
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};

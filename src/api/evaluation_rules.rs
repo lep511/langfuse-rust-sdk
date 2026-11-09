@@ -1,3 +1,5 @@
+//! Manage automated evaluation rules.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

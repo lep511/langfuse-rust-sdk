@@ -1,3 +1,5 @@
+//! Annotation queue and queue-item management.
+
 use std::sync::Arc;
 
 use serde::Serialize;

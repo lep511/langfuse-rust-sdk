@@ -1,4 +1,4 @@
-use langfuse_sdk::{ClientConfig, LangfuseClient, LangfuseError, RetryPolicy};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError, RetryPolicy};
 use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════

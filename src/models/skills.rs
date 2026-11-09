@@ -1,3 +1,5 @@
+//! Skill request and response types.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

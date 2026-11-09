@@ -1,3 +1,5 @@
+//! Manage individual prompt versions and their labels.
+
 use std::sync::Arc;
 
 use serde::Serialize;

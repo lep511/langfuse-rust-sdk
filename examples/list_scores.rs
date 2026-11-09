@@ -5,9 +5,9 @@
 //!   cargo run --example list_scores
 //! ```
 
-use langfuse_sdk::api::scores::ListScoresParams;
-use langfuse_sdk::models::scores::ScoreV3;
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::api::scores::ListScoresParams;
+use langfuse_rust_sdk::models::scores::ScoreV3;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

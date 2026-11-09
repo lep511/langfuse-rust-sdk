@@ -1,3 +1,5 @@
+//! Create, list, get and delete traces.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

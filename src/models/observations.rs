@@ -1,3 +1,5 @@
+//! Observation response types (spans, generations, events).
+
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 

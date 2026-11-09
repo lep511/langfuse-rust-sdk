@@ -1,17 +1,17 @@
-use langfuse_sdk::models::dataset_items::*;
-use langfuse_sdk::models::datasets::*;
-use langfuse_sdk::models::enums::*;
-use langfuse_sdk::models::health::*;
-use langfuse_sdk::models::ingestion::*;
-use langfuse_sdk::models::media::*;
-use langfuse_sdk::models::models_api::*;
-use langfuse_sdk::models::observations::*;
-use langfuse_sdk::models::projects::*;
-use langfuse_sdk::models::prompts::*;
-use langfuse_sdk::models::score_configs::*;
-use langfuse_sdk::models::scores::*;
-use langfuse_sdk::models::skills::*;
-use langfuse_sdk::models::traces::*;
+use langfuse_rust_sdk::models::dataset_items::*;
+use langfuse_rust_sdk::models::datasets::*;
+use langfuse_rust_sdk::models::enums::*;
+use langfuse_rust_sdk::models::health::*;
+use langfuse_rust_sdk::models::ingestion::*;
+use langfuse_rust_sdk::models::media::*;
+use langfuse_rust_sdk::models::models_api::*;
+use langfuse_rust_sdk::models::observations::*;
+use langfuse_rust_sdk::models::projects::*;
+use langfuse_rust_sdk::models::prompts::*;
+use langfuse_rust_sdk::models::score_configs::*;
+use langfuse_rust_sdk::models::scores::*;
+use langfuse_rust_sdk::models::skills::*;
+use langfuse_rust_sdk::models::traces::*;
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Enums — roundtrip for every variant
@@ -546,7 +546,7 @@ fn prompt_meta_deserialize() {
         "lastUpdatedAt": "2024-06-15T10:30:00Z",
         "lastConfig": null
     }"#;
-    let meta: langfuse_sdk::api::prompts::PromptMeta = serde_json::from_str(json).unwrap();
+    let meta: langfuse_rust_sdk::api::prompts::PromptMeta = serde_json::from_str(json).unwrap();
     assert_eq!(meta.versions, vec![1, 4]);
     assert_eq!(meta.r#type, PromptType::Text);
     assert!(meta.last_config.is_null());
@@ -1560,7 +1560,7 @@ fn paginated_response_with_health() {
             "totalPages": 1
         }
     }"#;
-    let page: langfuse_sdk::Paginated<HealthResponse> = serde_json::from_str(json).unwrap();
+    let page: langfuse_rust_sdk::Paginated<HealthResponse> = serde_json::from_str(json).unwrap();
     assert_eq!(page.data.len(), 2);
     assert_eq!(page.data[0].version, "2.0.0");
     assert_eq!(page.meta.page, 1);
@@ -1575,7 +1575,7 @@ fn paginated_empty_data() {
         "data": [],
         "meta": {"page": 1, "limit": 50, "totalItems": 0, "totalPages": 0}
     }"#;
-    let page: langfuse_sdk::Paginated<HealthResponse> = serde_json::from_str(json).unwrap();
+    let page: langfuse_rust_sdk::Paginated<HealthResponse> = serde_json::from_str(json).unwrap();
     assert!(page.data.is_empty());
     assert_eq!(page.meta.total_items, 0);
 }
@@ -1586,7 +1586,7 @@ fn cursor_paginated_with_next_cursor() {
         "data": [{"status": "OK", "version": "1.0"}],
         "meta": {"cursor": "eyJpZCI6ImFiYyJ9"}
     }"#;
-    let page: langfuse_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
+    let page: langfuse_rust_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
     assert_eq!(page.data.len(), 1);
     assert_eq!(page.meta.cursor.as_deref(), Some("eyJpZCI6ImFiYyJ9"));
 }
@@ -1597,7 +1597,7 @@ fn cursor_paginated_no_next_page() {
         "data": [{"status": "OK", "version": "1.0"}],
         "meta": {"cursor": null}
     }"#;
-    let page: langfuse_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
+    let page: langfuse_rust_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
     assert!(page.meta.cursor.is_none());
 }
 
@@ -1607,7 +1607,7 @@ fn cursor_paginated_missing_cursor_field() {
         "data": [],
         "meta": {}
     }"#;
-    let page: langfuse_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
+    let page: langfuse_rust_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
     assert!(page.meta.cursor.is_none());
 }
 
@@ -1617,14 +1617,14 @@ fn cursor_paginated_missing_cursor_field() {
 
 #[test]
 fn page_params_default_serializes_empty() {
-    let params = langfuse_sdk::pagination::PageParams::default();
+    let params = langfuse_rust_sdk::pagination::PageParams::default();
     let json = serde_json::to_value(&params).unwrap();
     assert_eq!(json, serde_json::json!({}));
 }
 
 #[test]
 fn page_params_with_values() {
-    let params = langfuse_sdk::pagination::PageParams {
+    let params = langfuse_rust_sdk::pagination::PageParams {
         page: Some(2),
         limit: Some(25),
     };
@@ -1635,21 +1635,21 @@ fn page_params_with_values() {
 
 #[test]
 fn cursor_params_default_serializes_empty() {
-    let params = langfuse_sdk::pagination::CursorParams::default();
+    let params = langfuse_rust_sdk::pagination::CursorParams::default();
     let json = serde_json::to_value(&params).unwrap();
     assert_eq!(json, serde_json::json!({}));
 }
 
 #[test]
 fn list_scores_params_default_serializes_empty() {
-    let params = langfuse_sdk::api::scores::ListScoresParams::default();
+    let params = langfuse_rust_sdk::api::scores::ListScoresParams::default();
     let json = serde_json::to_value(&params).unwrap();
     assert_eq!(json, serde_json::json!({}));
 }
 
 #[test]
 fn list_scores_params_partial() {
-    let params = langfuse_sdk::api::scores::ListScoresParams {
+    let params = langfuse_rust_sdk::api::scores::ListScoresParams {
         limit: Some(100),
         trace_id: Some("t1".into()),
         ..Default::default()
@@ -1663,7 +1663,7 @@ fn list_scores_params_partial() {
 
 #[test]
 fn list_skills_params_serialization() {
-    let params = langfuse_sdk::api::skills::ListSkillsParams {
+    let params = langfuse_rust_sdk::api::skills::ListSkillsParams {
         name: Some("pragmatic-coding".into()),
         page: Some(1),
         limit: Some(10),
@@ -1679,7 +1679,7 @@ fn list_skills_params_serialization() {
 
 #[test]
 fn get_skill_params_serialization() {
-    let params = langfuse_sdk::api::skills::GetSkillParams {
+    let params = langfuse_rust_sdk::api::skills::GetSkillParams {
         label: Some("latest".into()),
         include_content: Some(true),
         version: None,

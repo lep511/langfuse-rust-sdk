@@ -1,3 +1,5 @@
+//! Score request and response types (v3 multi-type scores).
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

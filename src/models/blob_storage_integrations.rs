@@ -1,3 +1,5 @@
+//! Blob storage integration types.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

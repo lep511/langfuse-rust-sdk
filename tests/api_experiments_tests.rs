@@ -1,9 +1,9 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::api::experiments::{ListExperimentItemsParams, ListExperimentsParams};
-use langfuse_sdk::models::enums::ObservationLevel;
-use langfuse_sdk::models::scores::ScoreV3;
+use langfuse_rust_sdk::api::experiments::{ListExperimentItemsParams, ListExperimentsParams};
+use langfuse_rust_sdk::models::enums::ObservationLevel;
+use langfuse_rust_sdk::models::scores::ScoreV3;
 use serde_json::json;
 use wiremock::Mock;
 use wiremock::matchers::{method, path};

@@ -1,3 +1,5 @@
+//! Create, list, get and delete datasets and dataset runs.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

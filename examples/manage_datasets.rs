@@ -5,10 +5,10 @@
 //!   cargo run --example manage_datasets
 //! ```
 
-use langfuse_sdk::models::dataset_items::CreateDatasetItemRequest;
-use langfuse_sdk::models::datasets::CreateDatasetRequest;
-use langfuse_sdk::pagination::PageParams;
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::models::dataset_items::CreateDatasetItemRequest;
+use langfuse_rust_sdk::models::datasets::CreateDatasetRequest;
+use langfuse_rust_sdk::pagination::PageParams;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

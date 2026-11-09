@@ -45,7 +45,7 @@ async fn delete_batch_sends_trace_ids_and_parses_response() {
 
     let resp = client
         .traces
-        .delete_batch(&langfuse_sdk::models::traces::DeleteTracesRequest {
+        .delete_batch(&langfuse_rust_sdk::models::traces::DeleteTracesRequest {
             trace_ids: vec!["t1".into(), "t2".into()],
         })
         .await

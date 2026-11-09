@@ -1,3 +1,5 @@
+//! Create, list and delete comments on traces and observations.
+
 use std::sync::Arc;
 
 use serde::Serialize;

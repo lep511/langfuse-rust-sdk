@@ -5,9 +5,9 @@
 //!   cargo run --example create_score
 //! ```
 
-use langfuse_sdk::models::enums::ScoreDataType;
-use langfuse_sdk::models::scores::{CreateScoreRequest, CreateScoreValue, CreateScoresResponse};
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::models::enums::ScoreDataType;
+use langfuse_rust_sdk::models::scores::{CreateScoreRequest, CreateScoreValue, CreateScoresResponse};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

@@ -5,10 +5,10 @@
 //!   cargo run --example score_configs
 //! ```
 
-use langfuse_sdk::models::enums::ScoreConfigDataType;
-use langfuse_sdk::models::score_configs::{CreateConfigCategory, CreateScoreConfigRequest};
-use langfuse_sdk::pagination::PageParams;
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::models::enums::ScoreConfigDataType;
+use langfuse_rust_sdk::models::score_configs::{CreateConfigCategory, CreateScoreConfigRequest};
+use langfuse_rust_sdk::pagination::PageParams;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

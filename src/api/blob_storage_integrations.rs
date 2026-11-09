@@ -1,3 +1,5 @@
+//! Blob storage integration configuration.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

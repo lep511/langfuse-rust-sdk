@@ -4,7 +4,7 @@
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example health_check
 //! ```
 
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::LangfuseError;
+use langfuse_rust_sdk::LangfuseError;
 use serde_json::json;
 use wiremock::Mock;
 use wiremock::matchers::{method, path};

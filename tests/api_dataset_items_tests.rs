@@ -1,8 +1,8 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::api::dataset_items::ListDatasetItemsParams;
-use langfuse_sdk::models::dataset_items::{
+use langfuse_rust_sdk::api::dataset_items::ListDatasetItemsParams;
+use langfuse_rust_sdk::models::dataset_items::{
     CreateDatasetItemRequest, DatasetItemMediaReferenceField,
 };
 use serde_json::{Value, json};

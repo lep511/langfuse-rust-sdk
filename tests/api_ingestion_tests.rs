@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::models::ingestion::IngestTracesRequest;
+use langfuse_rust_sdk::models::ingestion::IngestTracesRequest;
 use serde_json::json;
 use wiremock::Mock;
 use wiremock::matchers::{body_json, header, method, path};

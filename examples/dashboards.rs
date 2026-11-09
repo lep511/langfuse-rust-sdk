@@ -32,17 +32,17 @@
 use std::io::{IsTerminal, Write};
 use std::time::Duration;
 
-use langfuse_sdk::models::unstable_common::DashboardWidgetFilter;
-use langfuse_sdk::models::unstable_dashboard_widgets::{
+use langfuse_rust_sdk::models::unstable_common::DashboardWidgetFilter;
+use langfuse_rust_sdk::models::unstable_dashboard_widgets::{
     CreateDashboardWidgetRequest, DashboardWidget, DashboardWidgetChartType,
     DashboardWidgetDimension, DashboardWidgetMetric, DashboardWidgetMetricAggregation,
     DashboardWidgetView,
 };
-use langfuse_sdk::models::unstable_dashboards::{
+use langfuse_rust_sdk::models::unstable_dashboards::{
     CreateDashboardPlacementRequest, CreateDashboardRequest, DashboardPlacement,
     UpdateDashboardPlacementRequest,
 };
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 use tokio::sync::oneshot;
 
 type BoxError = Box<dyn std::error::Error>;

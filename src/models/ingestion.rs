@@ -1,3 +1,5 @@
+//! Ingestion request types for batch event submission.
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]

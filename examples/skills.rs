@@ -6,10 +6,10 @@
 //!   cargo run --example skills
 //! ```
 
-use langfuse_sdk::api::skills::{GetSkillParams, ListSkillsParams};
-use langfuse_sdk::models::skills::{CreateSkillVersionRequest, SkillVersionFileCreateInput};
-use langfuse_sdk::tools::YamlTool;
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::api::skills::{GetSkillParams, ListSkillsParams};
+use langfuse_rust_sdk::models::skills::{CreateSkillVersionRequest, SkillVersionFileCreateInput};
+use langfuse_rust_sdk::tools::YamlTool;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

@@ -10,10 +10,10 @@
 //!   cargo run --example prompt_labels
 //! ```
 
-use langfuse_sdk::api::prompt_version::UpdatePromptVersionRequest;
-use langfuse_sdk::api::prompts::{DeletePromptParams, GetPromptParams, ListPromptsParams};
-use langfuse_sdk::models::prompts::{CreatePromptRequest, Prompt};
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::api::prompt_version::UpdatePromptVersionRequest;
+use langfuse_rust_sdk::api::prompts::{DeletePromptParams, GetPromptParams, ListPromptsParams};
+use langfuse_rust_sdk::models::prompts::{CreatePromptRequest, Prompt};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 /// Folder names are part of the prompt name; the SDK URL-encodes the `/`.
 const PROMPT_NAME: &str = "rust-sdk-examples/label-demo";

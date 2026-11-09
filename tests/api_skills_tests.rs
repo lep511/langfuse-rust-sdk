@@ -1,10 +1,10 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::api::skills::{
+use langfuse_rust_sdk::api::skills::{
     GetSkillParams, ListSkillsParams, SetSkillVersionLabelsRequest, UpdateSkillRequest,
 };
-use langfuse_sdk::models::skills::{CreateSkillVersionRequest, SkillVersionFileCreateInput};
+use langfuse_rust_sdk::models::skills::{CreateSkillVersionRequest, SkillVersionFileCreateInput};
 use serde_json::{Value, json};
 use wiremock::Mock;
 use wiremock::matchers::{body_json, method, path, query_param};

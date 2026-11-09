@@ -10,13 +10,19 @@ All notable changes to this crate are documented here. The format follows
 
 - Comprehensive documentation for all public items in the core modules (`lib`,
   `config`, `error`, `http`, `pagination`, `retry`, `tools`), including a
-  crate-level doc comment with a quick-start example.
+  crate-level doc comment with quick-start, configuration and error-handling
+  examples.
+- Module-level `//!` doc comments on every `api/` and `models/` sub-module so
+  docs.rs shows a description next to each item in the module listing.
 
 ### Fixed
 
 - Eliminated all 1,599 `missing_docs` compiler warnings. The `api` and `models`
   modules now use `#![allow(missing_docs)]` since their OpenAPI-derived types
   have self-documenting field names.
+- Updated all test and example imports from `langfuse_sdk` to `langfuse_rust_sdk`
+  to match the crate rename introduced in v0.2.0.
+- Fixed outdated template references in `PUBLISHING.md`.
 
 ## [0.2.0] - 2026-11-09
 

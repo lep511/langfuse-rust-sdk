@@ -1,3 +1,5 @@
+//! Query observations (spans, generations, events).
+
 use std::sync::Arc;
 
 use serde::{Serialize, Serializer};

@@ -1,3 +1,5 @@
+//! Create, update, get and delete dataset items.
+
 use std::sync::Arc;
 
 use serde::Serialize;

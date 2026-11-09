@@ -3,7 +3,7 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use langfuse_sdk::LangfuseError;
+use langfuse_rust_sdk::LangfuseError;
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};

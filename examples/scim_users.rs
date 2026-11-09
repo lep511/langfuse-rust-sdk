@@ -10,8 +10,8 @@
 //!   cargo run --example scim_users
 //! ```
 
-use langfuse_sdk::api::scim::ListScimUsersParams;
-use langfuse_sdk::{ClientConfig, LangfuseClient, LangfuseError};
+use langfuse_rust_sdk::api::scim::ListScimUsersParams;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError};
 
 const PAGE_SIZE: i64 = 50;
 

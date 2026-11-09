@@ -1,3 +1,5 @@
+//! Manage score configuration presets.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

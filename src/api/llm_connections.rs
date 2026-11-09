@@ -1,3 +1,5 @@
+//! Manage LLM provider connections.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

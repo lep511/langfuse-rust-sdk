@@ -1,21 +1,67 @@
 //! Async Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 //!
-//! Built on `reqwest` + `tokio`, the SDK exposes one sub-client per API
+//! Built on [`reqwest`] + [`tokio`], the SDK exposes one sub-client per API
 //! resource group through [`LangfuseClient`].  All sub-clients share a
 //! single connection pool, authentication header and retry policy.
 //!
 //! # Quick start
 //!
 //! ```rust,no_run
-//! use langfuse_sdk::{ClientConfig, LangfuseClient};
+//! use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError};
 //!
-//! # async fn run() -> Result<(), langfuse_sdk::LangfuseError> {
+//! #[tokio::main]
+//! async fn main() -> Result<(), LangfuseError> {
+//!     // Build the client — keys come from the Langfuse project settings.
+//!     let config = ClientConfig::builder("pk-lf-…", "sk-lf-…")
+//!         .base_url("https://cloud.langfuse.com")
+//!         .build()?;
+//!     let client = LangfuseClient::new(config)?;
+//!
+//!     // Verify connectivity.
+//!     let health = client.health.check().await?;
+//!     println!("Langfuse {} is {}", health.version, health.status);
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Configuration
+//!
+//! [`ClientConfig::builder`] accepts the public and secret keys and returns a
+//! [`ConfigBuilder`] with sensible defaults.  Override them as needed:
+//!
+//! ```rust,no_run
+//! # use langfuse_rust_sdk::{ClientConfig, RetryPolicy};
+//! # use std::time::Duration;
 //! let config = ClientConfig::builder("pk-lf-…", "sk-lf-…")
-//!     .base_url("https://cloud.langfuse.com")
-//!     .build()?;
-//! let client = LangfuseClient::new(config)?;
-//! let health = client.health.check().await?;
-//! # Ok(())
+//!     .base_url("https://self-hosted.example.com")
+//!     .timeout(Duration::from_secs(60))
+//!     .retry_policy(RetryPolicy {
+//!         max_retries: 5,
+//!         ..Default::default()
+//!     })
+//!     .header("x-custom", "value")
+//!     .build()
+//!     .expect("valid config");
+//! ```
+//!
+//! # Error handling
+//!
+//! Every method returns `Result<T, `[`LangfuseError`]`>`.  HTTP status codes
+//! are mapped to dedicated variants so callers can match on specific failure
+//! modes:
+//!
+//! ```rust,no_run
+//! # use langfuse_rust_sdk::{LangfuseClient, LangfuseError, ClientConfig};
+//! # async fn example(client: &LangfuseClient) {
+//! match client.health.check().await {
+//!     Ok(h) => println!("ok: {}", h.status),
+//!     Err(LangfuseError::Unauthorized { .. }) => eprintln!("bad API keys"),
+//!     Err(LangfuseError::RateLimited { retry_after, .. }) => {
+//!         eprintln!("throttled, retry after {retry_after:?}");
+//!     }
+//!     Err(e) => eprintln!("other error: {e}"),
+//! }
 //! # }
 //! ```
 #![warn(missing_docs)]

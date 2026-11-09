@@ -1,3 +1,5 @@
+//! Organization-level operations.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

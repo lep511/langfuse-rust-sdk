@@ -1,11 +1,11 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::models::enums::ScoreConfigDataType;
-use langfuse_sdk::models::score_configs::{
+use langfuse_rust_sdk::models::enums::ScoreConfigDataType;
+use langfuse_rust_sdk::models::score_configs::{
     CreateConfigCategory, CreateScoreConfigRequest, UpdateScoreConfigRequest,
 };
-use langfuse_sdk::pagination::PageParams;
+use langfuse_rust_sdk::pagination::PageParams;
 use serde_json::{Value, json};
 use wiremock::Mock;
 use wiremock::matchers::{body_json, method, path, query_param};

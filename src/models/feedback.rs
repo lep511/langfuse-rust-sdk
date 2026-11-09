@@ -1,3 +1,5 @@
+//! Feedback request and response types.
+
 use serde::{Deserialize, Serialize};
 
 /// What the feedback is about.

@@ -1,3 +1,5 @@
+//! Health-check endpoint.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

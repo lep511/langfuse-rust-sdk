@@ -11,12 +11,12 @@
 //! ```
 
 use chrono::{Duration, SecondsFormat, Utc};
-use langfuse_sdk::models::metrics::{
+use langfuse_rust_sdk::models::metrics::{
     MetricsAggregation, MetricsDimension, MetricsFilter, MetricsGranularity, MetricsMetric,
     MetricsOrderBy, MetricsQuery, MetricsQueryConfig, MetricsSortDirection, MetricsTimeDimension,
     MetricsView,
 };
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

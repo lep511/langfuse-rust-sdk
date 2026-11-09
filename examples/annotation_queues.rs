@@ -15,17 +15,17 @@
 //!   cargo run --example annotation_queues
 //! ```
 
-use langfuse_sdk::api::annotation_queues::ListQueueItemsParams;
-use langfuse_sdk::api::observations::ListObservationsParams;
-use langfuse_sdk::models::annotation_queues::{
+use langfuse_rust_sdk::api::annotation_queues::ListQueueItemsParams;
+use langfuse_rust_sdk::api::observations::ListObservationsParams;
+use langfuse_rust_sdk::models::annotation_queues::{
     AnnotationQueue, AnnotationQueueObjectType, AnnotationQueueStatus,
     CreateAnnotationQueueItemRequest, CreateAnnotationQueueRequest,
     UpdateAnnotationQueueItemRequest,
 };
-use langfuse_sdk::models::enums::ScoreConfigDataType;
-use langfuse_sdk::models::score_configs::CreateScoreConfigRequest;
-use langfuse_sdk::pagination::PageParams;
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::models::enums::ScoreConfigDataType;
+use langfuse_rust_sdk::models::score_configs::CreateScoreConfigRequest;
+use langfuse_rust_sdk::pagination::PageParams;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 const QUEUE_NAME: &str = "rust-sdk-example-queue";
 

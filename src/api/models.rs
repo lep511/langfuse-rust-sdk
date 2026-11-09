@@ -1,3 +1,5 @@
+//! CRUD operations on LLM model definitions.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

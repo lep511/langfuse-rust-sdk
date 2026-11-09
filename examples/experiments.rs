@@ -7,10 +7,10 @@
 //! ```
 
 use chrono::{Duration, SecondsFormat, Utc};
-use langfuse_sdk::api::experiments::{ListExperimentItemsParams, ListExperimentsParams};
-use langfuse_sdk::models::experiments::Experiment;
-use langfuse_sdk::models::scores::ScoreV3;
-use langfuse_sdk::{ClientConfig, LangfuseClient};
+use langfuse_rust_sdk::api::experiments::{ListExperimentItemsParams, ListExperimentsParams};
+use langfuse_rust_sdk::models::experiments::Experiment;
+use langfuse_rust_sdk::models::scores::ScoreV3;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 /// Stop after this many pages so the example stays short on large projects.
 const MAX_PAGES: usize = 3;

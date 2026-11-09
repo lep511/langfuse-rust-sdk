@@ -1,3 +1,5 @@
+//! Manage skills, skill versions and their files.
+
 use std::sync::Arc;
 
 use serde::Serialize;

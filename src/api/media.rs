@@ -1,3 +1,5 @@
+//! Upload and manage media assets.
+
 use std::sync::Arc;
 
 use crate::error::LangfuseError;

@@ -1,6 +1,6 @@
-# Publishing voyageai to crates.io
+# Publishing langfuse-rust-sdk to crates.io
 
-Step-by-step instructions for preparing, packaging, and publishing the `langfuse-sdk` crate to [crates.io](https://crates.io/).
+Step-by-step instructions for preparing, packaging, and publishing the `langfuse-rust-sdk` crate to [crates.io](https://crates.io/).
 
 ---
 
@@ -42,17 +42,17 @@ crates.io enforces several metadata fields. The current `Cargo.toml` is missing 
 
 ```toml
 [package]
-name = "mongodb-voyageai"
+name = "langfuse-rust-sdk"
 version = "1.0.1"
 edition = "2024"
-description = "A client for generating embeddings and reranking with Voyage AI"
+description = "..."
 license = "MIT"
-repository = "https://github.com/<owner>/mongodb-voyageai"
-homepage = "https://github.com/<owner>/mongodb-voyageai"
-documentation = "https://docs.rs/mongodb-voyageai"
+repository = "https://github.com/<owner>/langfuse-rust-sdk"
+homepage = "https://github.com/<owner>/langfuse-rust-sdk"
+documentation = "https://docs.rs/langfuse-rust-sdk"
 readme = "README.md"
-keywords = ["voyageai", "embeddings", "rerank", "ai", "nlp"]
-categories = ["api-bindings", "science"]
+keywords = ["langfuse"]
+categories = [""]
 ```
 
 ### Required fields
@@ -80,8 +80,7 @@ categories = ["api-bindings", "science"]
 
 - Crate names must be ASCII, start with a letter, and contain only letters, digits, `-`, or `_`.
 - Maximum 64 characters.
-- Names are first-come, first-served. Check availability: `cargo search voyageai`.
-- The name `voyageai` may already be taken — if so, consider `voyageai-rs` or `voyage-ai`.
+- Names are first-come, first-served. Check availability: `cargo search langfuse-rust-sdk`.
 
 ---
 
@@ -117,7 +116,7 @@ crates.io enforces a **10 MB** maximum for the compressed package. Check with:
 
 ```bash
 cargo package --allow-dirty
-ls -lh target/package/voyageai-1.9.0.crate
+ls -lh target/package/langfuse-rust-sdk-1.9.0.crate
 ```
 
 ---
@@ -198,8 +197,8 @@ This:
 
 ### 6. Verify
 
-- Visit `https://crates.io/crates/voyageai`
-- Docs will auto-build at `https://docs.rs/voyageai` within a few minutes
+- Visit `https://crates.io/crates/langfuse-rust-sdk`
+- Docs will auto-build at `https://docs.rs/langfuse-rust-sdk` within a few minutes
 
 ---
 
@@ -227,7 +226,7 @@ Open `Cargo.toml` and bump `version`:
 
 ```toml
 [package]
-name = "voyageai"
+name = "langfuse-rust-sdk"
 version = "1.9.1"   # was 1.9.0
 ```
 
@@ -313,12 +312,12 @@ Cargo will package the crate, upload it, and print a confirmation URL. The new v
 
 1. Check the crates.io page:
    ```
-   https://crates.io/crates/voyageai
+   https://crates.io/crates/langfuse-rust-sdk
    ```
 2. Confirm the new version appears at the top of the version list.
 3. Wait ~5 minutes, then verify docs.rs built successfully:
    ```
-   https://docs.rs/voyageai/<new-version>
+   https://docs.rs/langfuse-rust-sdk/<new-version>
    ```
 4. Optionally, create a GitHub Release pointing to the tag and paste in the CHANGELOG entry.
 
@@ -329,14 +328,14 @@ Cargo will package the crate, upload it, and print a confirmation URL. The new v
 After publishing, users can upgrade with:
 
 ```bash
-cargo update -p voyageai
+cargo update -p langfuse-rust-sdk
 ```
 
 Or by editing their `Cargo.toml` to pin the new version:
 
 ```toml
 [dependencies]
-voyageai = "1.9.1"
+langfuse-rust-sdk = "1.9.1"
 ```
 
 ---
@@ -349,7 +348,7 @@ voyageai = "1.9.1"
 | `working directory contains uncommitted changes` | Dirty git state | `git add -A && git commit` |
 | `failed to verify package tarball` | Code doesn't compile from the packaged archive | Run `cargo package` locally and fix build errors |
 | `package size exceeds 10MB` | Large test fixtures or generated files included | Add paths to `.gitignore` or use `exclude` in `Cargo.toml` |
-| Docs.rs build fails | Feature-gated code or platform-specific dependencies | Check the build log at `https://docs.rs/crate/voyageai/<version>/builds` |
+| Docs.rs build fails | Feature-gated code or platform-specific dependencies | Check the build log at `https://docs.rs/crate/langfuse-rust-sdk/<version>/builds` |
 
 ---
 
@@ -373,7 +372,6 @@ cargo yank --version 1.9.0 --undo
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `the remote server responded with an error: crate name is already taken` | Someone else owns the name | Choose a different name (e.g. `voyageai-rs`) |
 | `manifest has no documentation, homepage or repository` | Warning — missing recommended fields | Add `repository`, `homepage`, `documentation` to `[package]` |
 | `files in the working directory contain changes that were not yet committed` | Uncommitted changes | `git add -A && git commit` |
 | `failed to verify package tarball` | Code doesn't compile from the packaged archive | Run `cargo package` and fix build errors |
@@ -382,21 +380,5 @@ cargo yank --version 1.9.0 --undo
 
 ---
 
-## Summary of required changes before publishing
-
-```diff
- [package]
- name = "voyageai"
- version = "1.9.0"
- edition = "2024"
- description = "A client for generating embeddings and reranking with https://voyageai.com"
- license = "MIT"
-+repository = "https://github.com/<owner>/voyageai-rust"
-+homepage = "https://github.com/<owner>/voyageai-rust"
-+documentation = "https://docs.rs/voyageai"
-+readme = "README.md"
-+keywords = ["voyageai", "embeddings", "rerank", "ai", "nlp"]
-+categories = ["api-bindings", "science"]
-```
 
 Once those fields are added, all pre-publish checks pass, and the code is committed and tagged — you're ready to `cargo publish`.

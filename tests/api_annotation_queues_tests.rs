@@ -1,12 +1,12 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::api::annotation_queues::ListQueueItemsParams;
-use langfuse_sdk::models::annotation_queues::{
+use langfuse_rust_sdk::api::annotation_queues::ListQueueItemsParams;
+use langfuse_rust_sdk::models::annotation_queues::{
     AnnotationQueueObjectType, AnnotationQueueStatus, CreateAnnotationQueueItemRequest,
     CreateAnnotationQueueRequest, UpdateAnnotationQueueItemRequest,
 };
-use langfuse_sdk::pagination::PageParams;
+use langfuse_rust_sdk::pagination::PageParams;
 use serde_json::{Value, json};
 use wiremock::Mock;
 use wiremock::matchers::{body_json, method, path, query_param};

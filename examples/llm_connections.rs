@@ -10,11 +10,11 @@
 //!   cargo run --example llm_connections
 //! ```
 
-use langfuse_sdk::models::llm_connections::{
+use langfuse_rust_sdk::models::llm_connections::{
     LlmAdapter, LlmConnection, UpsertLlmConnectionRequest,
 };
-use langfuse_sdk::pagination::PageParams;
-use langfuse_sdk::{ClientConfig, LangfuseClient, LangfuseError};
+use langfuse_rust_sdk::pagination::PageParams;
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError};
 
 const EXAMPLE_PROVIDER: &str = "rust-sdk-example";
 

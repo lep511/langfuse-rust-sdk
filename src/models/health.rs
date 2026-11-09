@@ -1,3 +1,5 @@
+//! Health-check response types.
+
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]

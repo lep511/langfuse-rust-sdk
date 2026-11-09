@@ -3,10 +3,10 @@
 mod common;
 
 use common::*;
-use langfuse_sdk::LangfuseError;
-use langfuse_sdk::models::unstable_common::DashboardWidgetFilter;
-use langfuse_sdk::models::unstable_dashboards::*;
-use langfuse_sdk::pagination::PageParams;
+use langfuse_rust_sdk::LangfuseError;
+use langfuse_rust_sdk::models::unstable_common::DashboardWidgetFilter;
+use langfuse_rust_sdk::models::unstable_dashboards::*;
+use langfuse_rust_sdk::pagination::PageParams;
 use serde_json::{Value, json};
 use wiremock::Mock;
 use wiremock::matchers::{body_json, method, path};

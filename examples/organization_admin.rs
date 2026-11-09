@@ -10,7 +10,7 @@
 //!   cargo run --example organization_admin
 //! ```
 
-use langfuse_sdk::{ClientConfig, LangfuseClient, LangfuseError};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     let config = ClientConfig::builder(

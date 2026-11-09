@@ -1,3 +1,5 @@
+//! Manage experiments and their runs.
+
 use std::sync::Arc;
 
 use serde::Serialize;
