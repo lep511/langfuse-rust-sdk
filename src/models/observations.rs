@@ -1,0 +1,51 @@
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+
+use super::enums::ObservationLevel;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservationV2 {
+    pub id: String,
+    pub trace_id: Option<String>,
+    pub project_id: String,
+    pub r#type: String,
+    pub start_time: DateTime<Utc>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub parent_observation_id: Option<String>,
+    pub is_root_observation: Option<bool>,
+    pub name: Option<String>,
+    pub level: Option<ObservationLevel>,
+    pub status_message: Option<String>,
+    pub version: Option<String>,
+    pub environment: Option<String>,
+    pub bookmarked: Option<bool>,
+    pub public: Option<bool>,
+    pub user_id: Option<String>,
+    pub session_id: Option<String>,
+    pub completion_start_time: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub input: Option<serde_json::Value>,
+    pub output: Option<serde_json::Value>,
+    pub metadata: Option<serde_json::Value>,
+    pub model: Option<String>,
+    pub model_id: Option<String>,
+    pub internal_model_id: Option<String>,
+    pub model_parameters: Option<serde_json::Value>,
+    pub usage_details: Option<serde_json::Value>,
+    pub cost_details: Option<serde_json::Value>,
+    pub total_cost: Option<f64>,
+    pub usage_pricing_tier_name: Option<String>,
+    pub input_price: Option<String>,
+    pub output_price: Option<String>,
+    pub total_price: Option<String>,
+    pub prompt_id: Option<String>,
+    pub prompt_name: Option<String>,
+    pub prompt_version: Option<i64>,
+    pub latency: Option<f64>,
+    pub time_to_first_token: Option<f64>,
+    pub trace_name: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub release: Option<String>,
+}
