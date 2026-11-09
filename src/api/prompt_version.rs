@@ -8,6 +8,7 @@ use crate::error::LangfuseError;
 use crate::http::{HttpClient, encode_path_segment};
 use crate::models::prompts::Prompt;
 
+#[derive(Clone)]
 pub struct PromptVersionClient {
     pub(crate) http: Arc<HttpClient>,
 }

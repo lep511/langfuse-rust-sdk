@@ -7,8 +7,9 @@ use serde::Serialize;
 use crate::error::LangfuseError;
 use crate::http::{HttpClient, encode_path_segment};
 use crate::models::scores::{CreateScoreRequest, CreateScoresResponse, ScoreV3};
-use crate::pagination::CursorPaginated;
+use crate::pagination::{CursorPaginated, Pages, impl_cursor_query, paginate_cursor};
 
+#[derive(Clone)]
 pub struct ScoresClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -58,6 +59,8 @@ pub struct ListScoresParams {
     pub fields: Option<String>,
 }
 
+impl_cursor_query!(ListScoresParams);
+
 impl ScoresClient {
     /// `GET /api/public/v3/scores` (cursor-paginated).
     pub async fn list(
@@ -67,6 +70,15 @@ impl ScoresClient {
         self.http
             .get_with_query("/api/public/v3/scores", params)
             .await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.cursor`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: ListScoresParams) -> Pages<'_, CursorPaginated<ScoreV3>> {
+        paginate_cursor(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     /// `POST /api/public/scores`: create a batch of scores asynchronously.

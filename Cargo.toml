@@ -25,6 +25,8 @@ tracing = "0.1"
 url = "2"
 percent-encoding = "2"
 serde_norway = "0.9"
+sha2 = "0.11.1"
+futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 
 [features]
 unstable = []
@@ -33,6 +35,7 @@ unstable = []
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
 dotenvy = "0.15"
 wiremock = "0.6"
+futures = "0.3.34"
 
 [[example]]
 name = "dashboards"

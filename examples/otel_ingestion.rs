@@ -1,47 +1,19 @@
-//! Ingest OpenTelemetry trace spans into Langfuse.
+//! Ingest an OpenTelemetry span into Langfuse and print its URL in the UI.
+//!
+//! Writes data: one trace, kept so you can open it. Delete it in the UI or with
+//! `client.traces.delete(trace_id)`.
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 //!   cargo run --example otel_ingestion
 //! ```
 
+use langfuse_rust_sdk::ids::{create_observation_id, create_trace_id};
 use langfuse_rust_sdk::models::ingestion::*;
 use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
-    let config = ClientConfig::builder(
-        std::env::var("LANGFUSE_PUBLIC_KEY")?,
-        std::env::var("LANGFUSE_SECRET_KEY")?,
-    )
-    .base_url(
-        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
-    )
-    .build()?;
-    Ok(LangfuseClient::new(config)?)
-}
-
-fn string_attr(key: &str, value: &str) -> OtelKeyValue {
-    OtelKeyValue {
-        key: key.into(),
-        value: OtelAnyValue {
-            string_value: Some(value.into()),
-            int_value: None,
-            double_value: None,
-            bool_value: None,
-        },
-    }
-}
-
-fn int_attr(key: &str, value: i64) -> OtelKeyValue {
-    OtelKeyValue {
-        key: key.into(),
-        value: OtelAnyValue {
-            string_value: None,
-            int_value: Some(value),
-            double_value: None,
-            bool_value: None,
-        },
-    }
+    Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
 #[tokio::main]
@@ -49,8 +21,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    let trace_id = uuid::Uuid::new_v4().to_string().replace('-', "");
-    let span_id = uuid::Uuid::new_v4().to_string().replace('-', "")[..16].to_string();
+    let trace_id = create_trace_id(None);
+    let span_id = create_observation_id(None);
 
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -58,47 +30,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start_ns = now_ns.to_string();
     let end_ns = (now_ns + 2_500_000_000u128).to_string(); // +2.5s
 
+    let span = OtelSpan {
+        kind: Some(3), // CLIENT
+        attributes: Some(vec![
+            OtelKeyValue::string("langfuse.observation.type", "generation"),
+            OtelKeyValue::string("langfuse.trace.name", "rust-sdk-otel-example"),
+            OtelKeyValue::strings("langfuse.trace.tags", ["rust-sdk", "example"]),
+            OtelKeyValue::json(
+                "langfuse.observation.input",
+                &serde_json::json!([{"role": "user", "content": "Hello!"}]),
+            )?,
+            OtelKeyValue::string("gen_ai.system", "anthropic"),
+            OtelKeyValue::string("gen_ai.request.model", "claude-3-sonnet"),
+            OtelKeyValue::double("gen_ai.request.temperature", 0.7),
+            OtelKeyValue::int("gen_ai.usage.input_tokens", 150),
+            OtelKeyValue::int("gen_ai.usage.output_tokens", 320),
+        ]),
+        status: Some(OtelStatus {
+            code: Some(1), // OK
+            message: None,
+        }),
+        ..OtelSpan::new(&trace_id, span_id, "llm-generation", start_ns, end_ns)
+    };
+
     let request = IngestTracesRequest {
         resource_spans: vec![OtelResourceSpan {
             resource: Some(OtelResource {
                 attributes: Some(vec![
-                    string_attr("service.name", "rust-sdk-example"),
-                    string_attr("service.version", "0.1.0"),
+                    OtelKeyValue::string("service.name", "rust-sdk-example"),
+                    OtelKeyValue::string("service.version", env!("CARGO_PKG_VERSION")),
                 ]),
             }),
             scope_spans: vec![OtelScopeSpan {
                 scope: Some(OtelInstrumentationScope {
                     name: Some("langfuse-sdk-rust".into()),
-                    version: Some("0.1.0".into()),
+                    version: Some(env!("CARGO_PKG_VERSION").into()),
                     attributes: None,
                 }),
-                spans: vec![OtelSpan {
-                    trace_id: trace_id.clone(),
-                    span_id,
-                    parent_span_id: None,
-                    name: "llm-generation".into(),
-                    kind: Some(3), // CLIENT
-                    start_time_unix_nano: start_ns,
-                    end_time_unix_nano: end_ns,
-                    attributes: Some(vec![
-                        string_attr("gen_ai.system", "anthropic"),
-                        string_attr("gen_ai.request.model", "claude-3-sonnet"),
-                        int_attr("gen_ai.usage.input_tokens", 150),
-                        int_attr("gen_ai.usage.output_tokens", 320),
-                        string_attr("gen_ai.request.temperature", "0.7"),
-                    ]),
-                    status: Some(OtelStatus {
-                        code: Some(1), // OK
-                        message: None,
-                    }),
-                }],
+                spans: vec![span],
             }],
         }],
     };
 
     client.ingestion.ingest_traces(&request).await?;
     println!("Ingested OTel trace: {trace_id}");
-    println!("  Span: llm-generation (2.5s, 150 in / 320 out tokens)");
+    println!("  Span: llm-generation (2.5s, 150 in / 320 out tokens, tags rust-sdk + example)");
+    // Ingestion is asynchronous: the trace shows up in the UI after a few seconds.
+    println!("  URL:  {}", client.trace_url(&trace_id).await?);
 
     Ok(())
 }

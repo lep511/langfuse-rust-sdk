@@ -13,6 +13,7 @@ use crate::models::skills::{
 
 pub use crate::models::skills::SkillMeta;
 
+#[derive(Clone)]
 pub struct SkillsClient {
     pub(crate) http: Arc<HttpClient>,
 }

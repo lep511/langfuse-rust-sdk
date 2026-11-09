@@ -5,8 +5,9 @@ use std::sync::Arc;
 use crate::error::LangfuseError;
 use crate::http::{HttpClient, encode_path_segment};
 use crate::models::models_api::{CreateModelRequest, Model};
-use crate::pagination::{PageParams, Paginated};
+use crate::pagination::{PageParams, Pages, Paginated, paginate_pages};
 
+#[derive(Clone)]
 pub struct ModelsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -14,6 +15,15 @@ pub struct ModelsClient {
 impl ModelsClient {
     pub async fn list(&self, params: &PageParams) -> Result<Paginated<Model>, LangfuseError> {
         self.http.get_with_query("/api/public/models", params).await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: PageParams) -> Pages<'_, Paginated<Model>> {
+        paginate_pages(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     pub async fn create(&self, req: &CreateModelRequest) -> Result<Model, LangfuseError> {

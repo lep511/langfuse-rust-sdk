@@ -14,6 +14,7 @@ use crate::models::scim::{
 const BASE: &str = "/api/public/scim";
 
 /// SCIM 2.0 user provisioning. Every endpoint requires an organization-scoped API key.
+#[derive(Clone)]
 pub struct ScimClient {
     pub(crate) http: Arc<HttpClient>,
 }

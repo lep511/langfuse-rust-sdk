@@ -21,15 +21,7 @@ const PROMPT_NAME: &str = "rust-sdk-examples/label-demo";
 type BoxError = Box<dyn std::error::Error>;
 
 fn build_client() -> Result<LangfuseClient, BoxError> {
-    let config = ClientConfig::builder(
-        std::env::var("LANGFUSE_PUBLIC_KEY")?,
-        std::env::var("LANGFUSE_SECRET_KEY")?,
-    )
-    .base_url(
-        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
-    )
-    .build()?;
-    Ok(LangfuseClient::new(config)?)
+    Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
 fn text_version(prompt: &str, message: &str) -> CreatePromptRequest {

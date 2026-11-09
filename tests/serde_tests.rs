@@ -1452,6 +1452,7 @@ fn serialize_ingest_traces_request() {
                         int_value: None,
                         double_value: None,
                         bool_value: None,
+                        array_value: None,
                     },
                 }]),
             }),
@@ -1465,6 +1466,7 @@ fn serialize_ingest_traces_request() {
                     trace_id: "abc123".into(),
                     span_id: "span-1".into(),
                     parent_span_id: None,
+                    trace_state: None,
                     name: "llm-call".into(),
                     kind: Some(3),
                     start_time_unix_nano: "1718445600000000000".into(),
@@ -1477,6 +1479,7 @@ fn serialize_ingest_traces_request() {
                                 int_value: None,
                                 double_value: None,
                                 bool_value: None,
+                                array_value: None,
                             },
                         },
                         OtelKeyValue {
@@ -1486,9 +1489,12 @@ fn serialize_ingest_traces_request() {
                                 int_value: Some(150),
                                 double_value: None,
                                 bool_value: None,
+                                array_value: None,
                             },
                         },
                     ]),
+                    events: None,
+                    links: None,
                     status: Some(OtelStatus {
                         code: Some(1),
                         message: None,
@@ -1523,6 +1529,7 @@ fn serialize_otel_any_value_only_populated_fields() {
         int_value: None,
         double_value: Some(2.5),
         bool_value: None,
+        array_value: None,
     };
     let json = serde_json::to_value(&val).unwrap();
     let obj = json.as_object().unwrap();
@@ -1537,9 +1544,125 @@ fn serialize_otel_any_value_bool() {
         int_value: None,
         double_value: None,
         bool_value: Some(true),
+        array_value: None,
     };
     let json = serde_json::to_value(&val).unwrap();
     assert_eq!(json, serde_json::json!({"boolValue": true}));
+}
+
+#[test]
+fn serialize_otel_array_value_for_tags() {
+    let attr = OtelKeyValue::strings("langfuse.trace.tags", ["prod", "checkout"]);
+    assert_eq!(
+        serde_json::to_value(&attr).unwrap(),
+        serde_json::json!({
+            "key": "langfuse.trace.tags",
+            "value": {"arrayValue": {"values": [
+                {"stringValue": "prod"},
+                {"stringValue": "checkout"}
+            ]}}
+        })
+    );
+}
+
+#[test]
+fn otel_value_constructors_set_one_field() {
+    let cases = [
+        (
+            OtelKeyValue::string("k", "v"),
+            serde_json::json!({"stringValue": "v"}),
+        ),
+        (
+            OtelKeyValue::int("k", 7),
+            serde_json::json!({"intValue": 7}),
+        ),
+        (
+            OtelKeyValue::double("k", 0.5),
+            serde_json::json!({"doubleValue": 0.5}),
+        ),
+        (
+            OtelKeyValue::bool("k", false),
+            serde_json::json!({"boolValue": false}),
+        ),
+        (
+            OtelKeyValue::new(
+                "k",
+                OtelAnyValue::array([OtelAnyValue::int(1), OtelAnyValue::bool(true)]),
+            ),
+            serde_json::json!({"arrayValue": {"values": [{"intValue": 1}, {"boolValue": true}]}}),
+        ),
+    ];
+    for (attr, value) in cases {
+        let json = serde_json::to_value(&attr).unwrap();
+        assert_eq!(json["key"], "k");
+        assert_eq!(json["value"], value);
+    }
+    assert_eq!(
+        serde_json::to_value(OtelAnyValue::default()).unwrap(),
+        serde_json::json!({})
+    );
+}
+
+#[test]
+fn otel_json_value_is_a_json_string() {
+    let attr = OtelKeyValue::json(
+        "langfuse.observation.input",
+        &serde_json::json!({"messages": [{"role": "user", "content": "hi"}]}),
+    )
+    .unwrap();
+    let json = serde_json::to_value(&attr).unwrap();
+    let encoded = json["value"]["stringValue"].as_str().unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(encoded).unwrap(),
+        serde_json::json!({"messages": [{"role": "user", "content": "hi"}]})
+    );
+}
+
+#[test]
+fn otel_span_new_skips_unset_optional_fields() {
+    let span = OtelSpan::new("t", "s", "name", "1", "2");
+    let json = serde_json::to_value(&span).unwrap();
+    let obj = json.as_object().unwrap();
+    for absent in ["traceState", "kind", "events", "links"] {
+        assert!(!obj.contains_key(absent), "{absent} should be skipped");
+    }
+    assert_eq!(json["traceId"], "t");
+    assert_eq!(json["startTimeUnixNano"], "1");
+    assert_eq!(json["endTimeUnixNano"], "2");
+    assert!(json["parentSpanId"].is_null());
+}
+
+#[test]
+fn serialize_otel_span_events_links_and_trace_state() {
+    let span = OtelSpan {
+        trace_state: Some("vendor=value".into()),
+        events: Some(vec![OtelSpanEvent {
+            time_unix_nano: "5".into(),
+            name: "retry".into(),
+            attributes: Some(vec![OtelKeyValue::int("attempt", 2)]),
+        }]),
+        links: Some(vec![OtelSpanLink {
+            trace_id: "other-trace".into(),
+            span_id: "other-span".into(),
+            trace_state: None,
+            attributes: None,
+        }]),
+        ..OtelSpan::new("t", "s", "name", "1", "9")
+    };
+    let json = serde_json::to_value(&span).unwrap();
+    assert_eq!(json["traceState"], "vendor=value");
+    assert_eq!(
+        json["events"],
+        serde_json::json!([{
+            "timeUnixNano": "5",
+            "name": "retry",
+            "attributes": [{"key": "attempt", "value": {"intValue": 2}}]
+        }])
+    );
+    assert_eq!(
+        json["links"],
+        serde_json::json!([{"traceId": "other-trace", "spanId": "other-span"}])
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1586,7 +1709,8 @@ fn cursor_paginated_with_next_cursor() {
         "data": [{"status": "OK", "version": "1.0"}],
         "meta": {"cursor": "eyJpZCI6ImFiYyJ9"}
     }"#;
-    let page: langfuse_rust_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
+    let page: langfuse_rust_sdk::CursorPaginated<HealthResponse> =
+        serde_json::from_str(json).unwrap();
     assert_eq!(page.data.len(), 1);
     assert_eq!(page.meta.cursor.as_deref(), Some("eyJpZCI6ImFiYyJ9"));
 }
@@ -1597,7 +1721,8 @@ fn cursor_paginated_no_next_page() {
         "data": [{"status": "OK", "version": "1.0"}],
         "meta": {"cursor": null}
     }"#;
-    let page: langfuse_rust_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
+    let page: langfuse_rust_sdk::CursorPaginated<HealthResponse> =
+        serde_json::from_str(json).unwrap();
     assert!(page.meta.cursor.is_none());
 }
 
@@ -1607,7 +1732,8 @@ fn cursor_paginated_missing_cursor_field() {
         "data": [],
         "meta": {}
     }"#;
-    let page: langfuse_rust_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
+    let page: langfuse_rust_sdk::CursorPaginated<HealthResponse> =
+        serde_json::from_str(json).unwrap();
     assert!(page.meta.cursor.is_none());
 }
 

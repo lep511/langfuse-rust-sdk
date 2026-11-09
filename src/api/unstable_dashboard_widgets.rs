@@ -8,12 +8,13 @@ use crate::models::unstable_dashboard_widgets::{
     CreateDashboardWidgetRequest, DashboardWidget, DeleteDashboardWidgetResponse,
     UpdateDashboardWidgetRequest,
 };
-use crate::pagination::{PageParams, Paginated};
+use crate::pagination::{PageParams, Pages, Paginated, paginate_pages};
 
 const BASE: &str = "/api/public/unstable/dashboard-widgets";
 
 /// Standalone chart definitions that can be placed on dashboards.
 /// Error bodies follow [`UnstablePublicApiError`](crate::models::unstable_common::UnstablePublicApiError).
+#[derive(Clone)]
 pub struct UnstableDashboardWidgetsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -25,6 +26,15 @@ impl UnstableDashboardWidgetsClient {
         params: &PageParams,
     ) -> Result<Paginated<DashboardWidget>, LangfuseError> {
         self.http.get_with_query(BASE, params).await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: PageParams) -> Pages<'_, Paginated<DashboardWidget>> {
+        paginate_pages(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     /// `POST /api/public/unstable/dashboard-widgets`

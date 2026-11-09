@@ -8,6 +8,7 @@ use crate::models::media::{
     GetMediaResponse, GetMediaUploadUrlRequest, GetMediaUploadUrlResponse, PatchMediaBody,
 };
 
+#[derive(Clone)]
 pub struct MediaClient {
     pub(crate) http: Arc<HttpClient>,
 }

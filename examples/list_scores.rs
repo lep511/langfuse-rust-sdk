@@ -1,24 +1,22 @@
-//! List scores using cursor-based pagination.
+//! List scores with the lazy cursor-pagination stream (`scores.list_pages`).
+//!
+//! Read-only: writes no data. Stops after `MAX_SCORES` scores.
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 //!   cargo run --example list_scores
 //! ```
 
+use futures::{StreamExt, TryStreamExt};
 use langfuse_rust_sdk::api::scores::ListScoresParams;
 use langfuse_rust_sdk::models::scores::ScoreV3;
 use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
+/// Cap on fetched scores: no page beyond the one holding the last of them is requested.
+const MAX_SCORES: usize = 100;
+
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
-    let config = ClientConfig::builder(
-        std::env::var("LANGFUSE_PUBLIC_KEY")?,
-        std::env::var("LANGFUSE_SECRET_KEY")?,
-    )
-    .base_url(
-        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
-    )
-    .build()?;
-    Ok(LangfuseClient::new(config)?)
+    Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
 fn score_summary(score: &ScoreV3) -> String {
@@ -47,28 +45,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    let mut cursor: Option<String> = None;
+    let params = ListScoresParams {
+        limit: Some(10),
+        ..Default::default()
+    };
+    // Pages are requested lazily, following `meta.cursor`.
+    let mut scores = client.scores.list_pages(params).items().take(MAX_SCORES);
+
     let mut total = 0;
-
-    loop {
-        let page = client
-            .scores
-            .list(&ListScoresParams {
-                limit: Some(10),
-                cursor: cursor.clone(),
-                ..Default::default()
-            })
-            .await?;
-
-        for score in &page.data {
-            total += 1;
-            println!("  [{total}] {}", score_summary(score));
-        }
-
-        match page.meta.cursor {
-            Some(next) => cursor = Some(next),
-            None => break,
-        }
+    while let Some(score) = scores.try_next().await? {
+        total += 1;
+        println!("  [{total}] {}", score_summary(&score));
     }
 
     println!("\nTotal scores fetched: {total}");

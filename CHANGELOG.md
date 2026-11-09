@@ -4,6 +4,49 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [Unreleased]
+
+### Breaking changes
+
+- **OTel ingestion models**: `OtelAnyValue` gained `array_value` and derives
+  `Default`; `OtelSpan` gained `trace_state`, `events` and `links`. Struct
+  literals need the new fields: use `..Default::default()` for `OtelAnyValue`
+  and `..OtelSpan::new(..)` for `OtelSpan`, or the new constructors.
+- `ConfigBuilder::header` no longer drops an invalid header name or value
+  silently: `build()` now returns `LangfuseError::Config` for it.
+
+### Added
+
+- `ClientConfig::from_env()` / `ConfigBuilder::from_env()` read
+  `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` (with the
+  deprecated `LANGFUSE_HOST` as fallback) and `LANGFUSE_TIMEOUT`. All examples
+  use it.
+- `ConfigBuilder::http_client(reqwest::Client)` sends requests through a custom
+  client (proxies, TLS, shared pool). An explicit `timeout()` is applied per
+  request; otherwise the client's own timeout is kept.
+- `LangfuseClient` and every sub-client implement `Clone` (clones share the
+  connection pool).
+- `LangfuseClient::auth_check()` verifies the API keys and returns their project.
+- `LangfuseClient::trace_url(trace_id)` builds
+  `{base_url}/project/{project_id}/traces/{trace_id}`, caching the project ID.
+- `ids::create_trace_id(seed)` / `ids::create_observation_id(seed)`: random W3C
+  IDs, or deterministic ones derived from `SHA-256(seed)`.
+- Lazy pagination streams: a `*_pages` method next to every list method that
+  returns `Paginated` or `CursorPaginated` (21 methods, e.g.
+  `observations.list_pages`), returning `pagination::Pages`; `Pages::items()`
+  flattens it into items. Generic `pagination::paginate_pages` /
+  `paginate_cursor` and the `PageQuery` / `CursorQuery` traits cover custom
+  use.
+- OTLP helpers: `OtelKeyValue::{new, string, int, double, bool, strings, json}`,
+  the matching `OtelAnyValue` constructors plus `OtelAnyValue::array`,
+  `OtelSpan::new`, `OtelSpanEvent` and `OtelSpanLink`. `arrayValue` was
+  verified against the Langfuse API (e.g. `langfuse.trace.tags`).
+
+### Fixed
+
+- A base URL with a path (`https://example.com/langfuse`) is now kept as the
+  prefix of every request; before, requests went to `https://example.com/api/...`.
+
 ## [0.2.2] - 2026-11-09
 
 ### Added

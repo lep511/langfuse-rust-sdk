@@ -11,6 +11,7 @@ use crate::models::ingestion::IngestTracesRequest;
 /// Ingestion data-model version the API requires from direct OTLP exporters.
 const INGESTION_VERSION: &str = "4";
 
+#[derive(Clone)]
 pub struct IngestionClient {
     pub(crate) http: Arc<HttpClient>,
 }

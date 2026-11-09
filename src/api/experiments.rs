@@ -7,8 +7,9 @@ use serde::Serialize;
 use crate::error::LangfuseError;
 use crate::http::HttpClient;
 use crate::models::experiments::{Experiment, ExperimentItem};
-use crate::pagination::CursorPaginated;
+use crate::pagination::{CursorPaginated, Pages, impl_cursor_query, paginate_cursor};
 
+#[derive(Clone)]
 pub struct ExperimentsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -43,6 +44,8 @@ pub struct ListExperimentsParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
 }
+
+impl_cursor_query!(ListExperimentsParams);
 
 impl ListExperimentsParams {
     pub fn new(from_start_time: impl Into<String>) -> Self {
@@ -91,6 +94,8 @@ pub struct ListExperimentItemsParams {
     pub filter: Option<String>,
 }
 
+impl_cursor_query!(ListExperimentItemsParams);
+
 impl ListExperimentItemsParams {
     pub fn new(from_start_time: impl Into<String>) -> Self {
         Self {
@@ -120,6 +125,18 @@ impl ExperimentsClient {
             .await
     }
 
+    /// Lazily stream every page of [`list`](Self::list), following `meta.cursor`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(
+        &self,
+        params: ListExperimentsParams,
+    ) -> Pages<'_, CursorPaginated<Experiment>> {
+        paginate_cursor(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
+    }
+
     /// `GET /api/public/experiment-items`, newest first (cursor-paginated).
     pub async fn list_items(
         &self,
@@ -128,5 +145,16 @@ impl ExperimentsClient {
         self.http
             .get_with_query("/api/public/experiment-items", params)
             .await
+    }
+
+    /// Lazily stream every page of [`list_items`](Self::list_items), following `meta.cursor`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_items_pages(
+        &self,
+        params: ListExperimentItemsParams,
+    ) -> Pages<'_, CursorPaginated<ExperimentItem>> {
+        paginate_cursor(params, move |params| async move {
+            self.list_items(&params).await
+        })
     }
 }

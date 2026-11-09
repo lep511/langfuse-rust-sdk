@@ -1,7 +1,9 @@
 mod common;
 
 use common::*;
-use langfuse_rust_sdk::models::media::{GetMediaUploadUrlRequest, MediaContentType, PatchMediaBody};
+use langfuse_rust_sdk::models::media::{
+    GetMediaUploadUrlRequest, MediaContentType, PatchMediaBody,
+};
 use serde_json::json;
 use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, ResponseTemplate};

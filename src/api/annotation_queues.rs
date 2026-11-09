@@ -12,10 +12,11 @@ use crate::models::annotation_queues::{
     CreateAnnotationQueueRequest, DeleteAnnotationQueueAssignmentResponse,
     DeleteAnnotationQueueItemResponse, UpdateAnnotationQueueItemRequest,
 };
-use crate::pagination::{PageParams, Paginated};
+use crate::pagination::{PageParams, Pages, Paginated, impl_page_query, paginate_pages};
 
 const BASE: &str = "/api/public/annotation-queues";
 
+#[derive(Clone)]
 pub struct AnnotationQueuesClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -31,6 +32,8 @@ pub struct ListQueueItemsParams {
     pub limit: Option<i64>,
 }
 
+impl_page_query!(ListQueueItemsParams);
+
 impl AnnotationQueuesClient {
     /// `GET /api/public/annotation-queues`
     pub async fn list_queues(
@@ -38,6 +41,14 @@ impl AnnotationQueuesClient {
         params: &PageParams,
     ) -> Result<Paginated<AnnotationQueue>, LangfuseError> {
         self.http.get_with_query(BASE, params).await
+    }
+
+    /// Lazily stream every page of [`list_queues`](Self::list_queues), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_queues_pages(&self, params: PageParams) -> Pages<'_, Paginated<AnnotationQueue>> {
+        paginate_pages(params, move |params| async move {
+            self.list_queues(&params).await
+        })
     }
 
     /// `POST /api/public/annotation-queues`
@@ -62,6 +73,18 @@ impl AnnotationQueuesClient {
         self.http
             .get_with_query(&format!("{}/items", queue_path(queue_id)), params)
             .await
+    }
+
+    /// Lazily stream every page of [`list_items`](Self::list_items), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_items_pages<'a>(
+        &'a self,
+        queue_id: &'a str,
+        params: ListQueueItemsParams,
+    ) -> Pages<'a, Paginated<AnnotationQueueItem>> {
+        paginate_pages(params, move |params| async move {
+            self.list_items(queue_id, &params).await
+        })
     }
 
     /// `POST /api/public/annotation-queues/{queueId}/items`

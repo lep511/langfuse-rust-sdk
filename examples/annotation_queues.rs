@@ -30,15 +30,7 @@ use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 const QUEUE_NAME: &str = "rust-sdk-example-queue";
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
-    let config = ClientConfig::builder(
-        std::env::var("LANGFUSE_PUBLIC_KEY")?,
-        std::env::var("LANGFUSE_SECRET_KEY")?,
-    )
-    .base_url(
-        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
-    )
-    .build()?;
-    Ok(LangfuseClient::new(config)?)
+    Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
 /// An existing active score config, or a new numeric one.

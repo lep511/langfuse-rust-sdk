@@ -9,6 +9,7 @@ pub use crate::models::feedback::{
 use crate::error::LangfuseError;
 use crate::http::HttpClient;
 
+#[derive(Clone)]
 pub struct FeedbackClient {
     pub(crate) http: Arc<HttpClient>,
 }

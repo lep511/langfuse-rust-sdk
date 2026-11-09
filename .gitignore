@@ -6,3 +6,6 @@ Cargo.lock
 
 # Virtual environments
 .venv
+
+# Local planning notes
+python-sdk-parity-plan.md

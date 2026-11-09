@@ -13,6 +13,7 @@ use crate::models::blob_storage_integrations::{
 const BASE: &str = "/api/public/integrations/blob-storage";
 
 /// Blob storage export integrations. Every endpoint requires an organization-scoped API key.
+#[derive(Clone)]
 pub struct BlobStorageIntegrationsClient {
     pub(crate) http: Arc<HttpClient>,
 }

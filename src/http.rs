@@ -36,15 +36,25 @@ pub struct HttpClient {
     auth_header: HeaderValue,
     default_headers: HeaderMap,
     retry_policy: RetryPolicy,
+    /// Per-request timeout, set only for a custom client with an explicit timeout
+    /// (the SDK-built client carries its timeout itself).
+    request_timeout: Option<Duration>,
 }
 
 impl HttpClient {
     /// Build a new HTTP client from resolved configuration.
     pub fn new(config: ClientConfig) -> Result<Self, LangfuseError> {
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .map_err(LangfuseError::Transport)?;
+        let timeout = config.timeout();
+        let (client, request_timeout) = match config.http_client {
+            Some(client) => (client, config.timeout),
+            None => {
+                let client = Client::builder()
+                    .timeout(timeout)
+                    .build()
+                    .map_err(LangfuseError::Transport)?;
+                (client, None)
+            }
+        };
 
         Ok(Self {
             client,
@@ -52,7 +62,13 @@ impl HttpClient {
             auth_header: config.auth_header,
             default_headers: config.default_headers,
             retry_policy: config.retry_policy,
+            request_timeout,
         })
+    }
+
+    /// The configured API base URL.
+    pub(crate) fn base_url(&self) -> &Url {
+        &self.base_url
     }
 
     /// Send a GET request and deserialize the JSON response.
@@ -178,7 +194,11 @@ impl HttpClient {
     }
 
     fn build_url(&self, path: &str) -> Result<Url, LangfuseError> {
-        self.base_url.join(path).map_err(LangfuseError::UrlParse)
+        // Join as a relative path so a base path prefix (`https://host/langfuse/`)
+        // is kept; the base URL always ends with `/` (see `ConfigBuilder::build`).
+        self.base_url
+            .join(path.trim_start_matches('/'))
+            .map_err(LangfuseError::UrlParse)
     }
 
     fn apply_common_headers(&self, mut builder: RequestBuilder) -> RequestBuilder {
@@ -245,6 +265,9 @@ impl HttpClient {
 
             let mut builder = self.client.request(method.clone(), url.clone());
             builder = self.apply_common_headers(builder);
+            if let Some(timeout) = self.request_timeout {
+                builder = builder.timeout(timeout);
+            }
 
             if let Some(extra) = headers {
                 for (name, value) in extra {

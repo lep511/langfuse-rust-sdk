@@ -7,12 +7,13 @@ use crate::http::{HttpClient, encode_path_segment};
 use crate::models::evaluators::{
     CreateEvaluatorRequest, DeletedEvaluator, Evaluator, EvaluatorVersion, UpdateEvaluatorRequest,
 };
-use crate::pagination::{CursorPaginated, CursorParams};
+use crate::pagination::{CursorPaginated, CursorParams, Pages, paginate_cursor};
 
 const BASE: &str = "/api/public/v2/evaluators";
 
 /// Evaluators. Error bodies follow
 /// [`PublicApiError`](crate::models::evaluation_common::PublicApiError).
+#[derive(Clone)]
 pub struct EvaluatorsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -29,6 +30,15 @@ impl EvaluatorsClient {
         params: &CursorParams,
     ) -> Result<CursorPaginated<Evaluator>, LangfuseError> {
         self.http.get_with_query(BASE, params).await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.cursor`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: CursorParams) -> Pages<'_, CursorPaginated<Evaluator>> {
+        paginate_cursor(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     /// `GET /api/public/v2/evaluators/{evaluatorId}`
@@ -65,6 +75,18 @@ impl EvaluatorsClient {
                 params,
             )
             .await
+    }
+
+    /// Lazily stream every page of [`list_versions`](Self::list_versions), following `meta.cursor`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_versions_pages<'a>(
+        &'a self,
+        evaluator_id: &'a str,
+        params: CursorParams,
+    ) -> Pages<'a, CursorPaginated<EvaluatorVersion>> {
+        paginate_cursor(params, move |params| async move {
+            self.list_versions(evaluator_id, &params).await
+        })
     }
 }
 

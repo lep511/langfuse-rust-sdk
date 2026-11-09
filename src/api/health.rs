@@ -6,6 +6,7 @@ use crate::error::LangfuseError;
 use crate::http::HttpClient;
 use crate::models::health::HealthResponse;
 
+#[derive(Clone)]
 pub struct HealthClient {
     pub(crate) http: Arc<HttpClient>,
 }

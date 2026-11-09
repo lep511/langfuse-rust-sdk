@@ -9,12 +9,13 @@ use crate::models::unstable_dashboards::{
     DeleteDashboardPlacementResponse, DeleteDashboardResponse, UpdateDashboardPlacementRequest,
     UpdateDashboardRequest,
 };
-use crate::pagination::{PageParams, Paginated};
+use crate::pagination::{PageParams, Pages, Paginated, paginate_pages};
 
 const BASE: &str = "/api/public/unstable/dashboards";
 
 /// Dashboards and their widget placements. Error bodies follow
 /// [`UnstablePublicApiError`](crate::models::unstable_common::UnstablePublicApiError).
+#[derive(Clone)]
 pub struct UnstableDashboardsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -23,6 +24,15 @@ impl UnstableDashboardsClient {
     /// `GET /api/public/unstable/dashboards`, most recently updated first.
     pub async fn list(&self, params: &PageParams) -> Result<Paginated<Dashboard>, LangfuseError> {
         self.http.get_with_query(BASE, params).await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: PageParams) -> Pages<'_, Paginated<Dashboard>> {
+        paginate_pages(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     /// `POST /api/public/unstable/dashboards`

@@ -15,8 +15,9 @@ use crate::models::unstable_topics::{
     TopicAssignmentList, TopicFacet, TopicList, TopicResultsOrderBy, TopicRule, TopicSummaryList,
     TopicWithStatus, TopicsOrderBy,
 };
-use crate::pagination::Paginated;
+use crate::pagination::{Pages, Paginated, impl_page_query, paginate_pages};
 
+#[derive(Clone)]
 pub struct UnstableTopicsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -33,6 +34,8 @@ pub struct ListTopicFacetsParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
 }
+
+impl_page_query!(ListTopicFacetsParams);
 
 /// Query of `GET /api/public/unstable/topic-rules`.
 pub type ListTopicRulesParams = ListTopicFacetsParams;
@@ -114,6 +117,17 @@ impl UnstableTopicsClient {
             .await
     }
 
+    /// Lazily stream every page of [`list_facets`](Self::list_facets), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_facets_pages(
+        &self,
+        params: ListTopicFacetsParams,
+    ) -> Pages<'_, Paginated<TopicFacet>> {
+        paginate_pages(params, move |params| async move {
+            self.list_facets(&params).await
+        })
+    }
+
     /// `GET /api/public/unstable/topic-facets/{facetId}` (inactive facets included).
     pub async fn get_facet(&self, facet_id: &str) -> Result<TopicFacet, LangfuseError> {
         self.http
@@ -156,6 +170,17 @@ impl UnstableTopicsClient {
         self.http
             .get_with_query("/api/public/unstable/topic-rules", params)
             .await
+    }
+
+    /// Lazily stream every page of [`list_rules`](Self::list_rules), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_rules_pages(
+        &self,
+        params: ListTopicRulesParams,
+    ) -> Pages<'_, Paginated<TopicRule>> {
+        paginate_pages(params, move |params| async move {
+            self.list_rules(&params).await
+        })
     }
 
     /// `GET /api/public/unstable/topic-rules/{ruleId}`

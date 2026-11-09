@@ -7,13 +7,14 @@ use crate::http::{HttpClient, encode_path_segment};
 use crate::models::llm_connections::{
     DeleteLlmConnectionResponse, LlmConnection, UpsertLlmConnectionRequest,
 };
-use crate::pagination::{PageParams, Paginated};
+use crate::pagination::{PageParams, Pages, Paginated, paginate_pages};
 
 const PROJECT_BASE: &str = "/api/public/llm-connections";
 const ORGANIZATION_BASE: &str = "/api/public/organizations/llm-connections";
 
 /// LLM connections at project level and, with an organization-scoped API key,
 /// at organization level (inherited by projects without an override).
+#[derive(Clone)]
 pub struct LlmConnectionsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -25,6 +26,15 @@ impl LlmConnectionsClient {
         params: &PageParams,
     ) -> Result<Paginated<LlmConnection>, LangfuseError> {
         self.http.get_with_query(PROJECT_BASE, params).await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: PageParams) -> Pages<'_, Paginated<LlmConnection>> {
+        paginate_pages(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     /// `PUT /api/public/llm-connections` (upsert on `provider`).
@@ -48,6 +58,17 @@ impl LlmConnectionsClient {
         params: &PageParams,
     ) -> Result<Paginated<LlmConnection>, LangfuseError> {
         self.http.get_with_query(ORGANIZATION_BASE, params).await
+    }
+
+    /// Lazily stream every page of [`list_organization`](Self::list_organization), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_organization_pages(
+        &self,
+        params: PageParams,
+    ) -> Pages<'_, Paginated<LlmConnection>> {
+        paginate_pages(params, move |params| async move {
+            self.list_organization(&params).await
+        })
     }
 
     /// `PUT /api/public/organizations/llm-connections` (upsert on `provider`).

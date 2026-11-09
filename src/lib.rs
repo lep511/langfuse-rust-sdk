@@ -27,6 +27,17 @@
 //!
 //! # Configuration
 //!
+//! [`ClientConfig::from_env`] reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`,
+//! `LANGFUSE_BASE_URL` and `LANGFUSE_TIMEOUT`:
+//!
+//! ```rust,no_run
+//! # use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
+//! # fn main() -> Result<(), langfuse_rust_sdk::LangfuseError> {
+//! let client = LangfuseClient::new(ClientConfig::from_env()?)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! [`ClientConfig::builder`] accepts the public and secret keys and returns a
 //! [`ConfigBuilder`] with sensible defaults.  Override them as needed:
 //!
@@ -73,6 +84,8 @@ pub mod config;
 pub mod error;
 /// Low-level HTTP transport shared by all API clients.
 pub mod http;
+/// Trace and observation ID generation (random or derived from a seed).
+pub mod ids;
 /// Request and response model structs generated from the OpenAPI spec.
 pub mod models;
 /// Pagination helpers for list endpoints.
@@ -87,7 +100,7 @@ pub use error::LangfuseError;
 pub use pagination::{CursorPaginated, Paginated};
 pub use retry::RetryPolicy;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::api::annotation_queues::AnnotationQueuesClient;
 use crate::api::blob_storage_integrations::BlobStorageIntegrationsClient;
@@ -120,10 +133,15 @@ use crate::api::unstable_dashboard_widgets::UnstableDashboardWidgetsClient;
 use crate::api::unstable_dashboards::UnstableDashboardsClient;
 #[cfg(feature = "unstable")]
 use crate::api::unstable_topics::UnstableTopicsClient;
-use crate::http::HttpClient;
+use crate::http::{HttpClient, encode_path_segment};
+use crate::models::projects::Project;
 
 /// Entry point of the SDK: one sub-client per API resource group, all sharing
 /// one HTTP client (connection pool, auth, retries).
+///
+/// Cloning is cheap: clones share the connection pool and configuration, so a
+/// clone can be moved into each spawned task.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct LangfuseClient {
     /// Health-check endpoint.
@@ -185,6 +203,9 @@ pub struct LangfuseClient {
     /// *(unstable)* Topic management.
     #[cfg(feature = "unstable")]
     pub unstable_topics: UnstableTopicsClient,
+    http: Arc<HttpClient>,
+    /// Project of the API keys, resolved once by [`Self::auth_check`].
+    project_id: Arc<OnceLock<String>>,
 }
 
 impl LangfuseClient {
@@ -279,6 +300,51 @@ impl LangfuseClient {
             unstable_topics: UnstableTopicsClient {
                 http: Arc::clone(&http),
             },
+            http,
+            project_id: Arc::new(OnceLock::new()),
         })
+    }
+
+    /// Verify the API keys and return the project they belong to.
+    ///
+    /// Calls `GET /api/public/projects`; an [`Unauthorized`](LangfuseError::Unauthorized)
+    /// error means the keys are wrong, and an empty project list returns
+    /// [`LangfuseError::Config`]. The project ID is cached for
+    /// [`trace_url`](Self::trace_url). Avoid calling this on hot paths: it is
+    /// one network round trip.
+    pub async fn auth_check(&self) -> Result<Project, LangfuseError> {
+        let project = self
+            .projects
+            .list()
+            .await?
+            .data
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                LangfuseError::Config(
+                    "Auth check failed: no project found for the provided API keys".into(),
+                )
+            })?;
+        // Another task may have cached it already; both values are the same project.
+        let _ = self.project_id.set(project.id.clone());
+        Ok(project)
+    }
+
+    /// URL of a trace in the Langfuse UI:
+    /// `{base_url}/project/{project_id}/traces/{trace_id}`.
+    ///
+    /// The project ID is fetched with [`auth_check`](Self::auth_check) on the
+    /// first call and cached (shared by clones of this client).
+    pub async fn trace_url(&self, trace_id: &str) -> Result<String, LangfuseError> {
+        let project_id = match self.project_id.get() {
+            Some(id) => id.clone(),
+            None => self.auth_check().await?.id,
+        };
+        let base = self.http.base_url().as_str().trim_end_matches('/');
+        Ok(format!(
+            "{base}/project/{}/traces/{}",
+            encode_path_segment(&project_id),
+            encode_path_segment(trace_id)
+        ))
     }
 }

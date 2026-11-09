@@ -364,3 +364,59 @@ fn unstable_sub_clients_exist_with_feature() {
     let _ = &client.unstable_dashboards;
     let _ = &client.unstable_topics;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Invalid default headers
+// ═══════════════════════════════════════════════════════════════════════
+
+fn config_error_message(result: Result<ClientConfig, LangfuseError>) -> String {
+    match result {
+        Err(LangfuseError::Config(msg)) => msg,
+        Err(other) => panic!("expected Config error, got {other:?}"),
+        Ok(_) => panic!("expected Config error, got Ok"),
+    }
+}
+
+#[test]
+fn invalid_header_name_is_config_error() {
+    let msg = config_error_message(
+        ClientConfig::builder("pk", "sk")
+            .header("bad header", "v")
+            .build(),
+    );
+    assert!(msg.contains("Invalid header name 'bad header'"), "{msg}");
+}
+
+#[test]
+fn invalid_header_value_is_config_error() {
+    let msg = config_error_message(
+        ClientConfig::builder("pk", "sk")
+            .header("x-ok", "line\nbreak")
+            .build(),
+    );
+    assert!(msg.contains("Invalid value for header 'x-ok'"), "{msg}");
+}
+
+#[test]
+fn first_invalid_header_is_reported() {
+    let msg = config_error_message(
+        ClientConfig::builder("pk", "sk")
+            .header("bad 1", "v")
+            .header("x-valid", "v")
+            .header("bad 2", "v")
+            .build(),
+    );
+    assert!(msg.contains("'bad 1'") && !msg.contains("'bad 2'"), "{msg}");
+}
+
+#[test]
+fn base_url_path_gets_a_trailing_slash() {
+    let config = ClientConfig::builder("pk", "sk")
+        .base_url("https://langfuse.example.com/langfuse")
+        .build()
+        .unwrap();
+    assert_eq!(
+        config.base_url().as_str(),
+        "https://langfuse.example.com/langfuse/"
+    );
+}

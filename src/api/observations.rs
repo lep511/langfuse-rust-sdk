@@ -7,8 +7,9 @@ use serde::{Serialize, Serializer};
 use crate::error::LangfuseError;
 use crate::http::HttpClient;
 use crate::models::observations::ObservationV2;
-use crate::pagination::CursorPaginated;
+use crate::pagination::{CursorPaginated, Pages, impl_cursor_query, paginate_cursor};
 
+#[derive(Clone)]
 pub struct ObservationsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -41,6 +42,8 @@ pub struct ListObservationsParams {
     /// JSON-encoded array of filter conditions.
     pub filter: Option<String>,
 }
+
+impl_cursor_query!(ListObservationsParams);
 
 impl ListObservationsParams {
     fn to_pairs(&self) -> Vec<(&'static str, String)> {
@@ -98,5 +101,17 @@ impl ObservationsClient {
         self.http
             .get_with_query("/api/public/v2/observations", params)
             .await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.cursor`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(
+        &self,
+        params: ListObservationsParams,
+    ) -> Pages<'_, CursorPaginated<ObservationV2>> {
+        paginate_cursor(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 }

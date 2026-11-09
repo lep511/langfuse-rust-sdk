@@ -5,8 +5,9 @@ use std::sync::Arc;
 use crate::error::LangfuseError;
 use crate::http::{HttpClient, encode_path_segment};
 use crate::models::datasets::{CreateDatasetRequest, Dataset};
-use crate::pagination::{PageParams, Paginated};
+use crate::pagination::{PageParams, Pages, Paginated, paginate_pages};
 
+#[derive(Clone)]
 pub struct DatasetsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -16,6 +17,15 @@ impl DatasetsClient {
         self.http
             .get_with_query("/api/public/v2/datasets", params)
             .await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: PageParams) -> Pages<'_, Paginated<Dataset>> {
+        paginate_pages(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     pub async fn create(&self, req: &CreateDatasetRequest) -> Result<Dataset, LangfuseError> {

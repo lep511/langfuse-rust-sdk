@@ -10,15 +10,7 @@ use langfuse_rust_sdk::models::prompts::{ChatPromptMessage, CreatePromptRequest,
 use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
-    let config = ClientConfig::builder(
-        std::env::var("LANGFUSE_PUBLIC_KEY")?,
-        std::env::var("LANGFUSE_SECRET_KEY")?,
-    )
-    .base_url(
-        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
-    )
-    .build()?;
-    Ok(LangfuseClient::new(config)?)
+    Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
 #[tokio::main]

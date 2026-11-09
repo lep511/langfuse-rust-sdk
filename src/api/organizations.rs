@@ -12,6 +12,7 @@ use crate::models::organizations::{
 const ORG_MEMBERSHIPS: &str = "/api/public/organizations/memberships";
 
 /// Organization administration. Every endpoint requires an organization-scoped API key.
+#[derive(Clone)]
 pub struct OrganizationsClient {
     pub(crate) http: Arc<HttpClient>,
 }

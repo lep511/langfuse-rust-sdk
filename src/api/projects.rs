@@ -11,6 +11,7 @@ use crate::models::projects::{
     ApiKeyDeletionResponse, ApiKeyList, ApiKeyResponse, Project, ProjectDeletionResponse,
 };
 
+#[derive(Clone)]
 pub struct ProjectsClient {
     pub(crate) http: Arc<HttpClient>,
 }

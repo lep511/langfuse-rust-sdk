@@ -7,8 +7,9 @@ use crate::http::{HttpClient, encode_path_segment};
 use crate::models::score_configs::{
     CreateScoreConfigRequest, ScoreConfig, UpdateScoreConfigRequest,
 };
-use crate::pagination::{PageParams, Paginated};
+use crate::pagination::{PageParams, Pages, Paginated, paginate_pages};
 
+#[derive(Clone)]
 pub struct ScoreConfigsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -18,6 +19,15 @@ impl ScoreConfigsClient {
         self.http
             .get_with_query("/api/public/score-configs", params)
             .await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: PageParams) -> Pages<'_, Paginated<ScoreConfig>> {
+        paginate_pages(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     pub async fn create(

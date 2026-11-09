@@ -9,8 +9,9 @@ use crate::http::{HttpClient, encode_path_segment};
 use crate::models::dataset_items::{
     CreateDatasetItemRequest, DatasetItem, DeleteDatasetItemResponse,
 };
-use crate::pagination::Paginated;
+use crate::pagination::{Pages, Paginated, impl_page_query, paginate_pages};
 
+#[derive(Clone)]
 pub struct DatasetItemsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -32,6 +33,8 @@ pub struct ListDatasetItemsParams {
     pub limit: Option<i64>,
 }
 
+impl_page_query!(ListDatasetItemsParams);
+
 impl DatasetItemsClient {
     pub async fn list(
         &self,
@@ -40,6 +43,15 @@ impl DatasetItemsClient {
         self.http
             .get_with_query("/api/public/dataset-items", params)
             .await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: ListDatasetItemsParams) -> Pages<'_, Paginated<DatasetItem>> {
+        paginate_pages(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     pub async fn create(

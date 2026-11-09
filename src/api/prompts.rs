@@ -9,8 +9,9 @@ use crate::error::LangfuseError;
 use crate::http::{HttpClient, encode_path_segment};
 use crate::models::enums::PromptType;
 use crate::models::prompts::{CreatePromptRequest, Prompt};
-use crate::pagination::Paginated;
+use crate::pagination::{Pages, Paginated, impl_page_query, paginate_pages};
 
+#[derive(Clone)]
 pub struct PromptsClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -37,6 +38,8 @@ pub struct ListPromptsParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
 }
+
+impl_page_query!(ListPromptsParams);
 
 /// Metadata returned for each prompt in the list endpoint (no prompt content).
 #[derive(Debug, Clone, Deserialize)]
@@ -84,6 +87,15 @@ impl PromptsClient {
         self.http
             .get_with_query("/api/public/v2/prompts", params)
             .await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.totalPages`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: ListPromptsParams) -> Pages<'_, Paginated<PromptMeta>> {
+        paginate_pages(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     pub async fn create(&self, req: &CreatePromptRequest) -> Result<Prompt, LangfuseError> {

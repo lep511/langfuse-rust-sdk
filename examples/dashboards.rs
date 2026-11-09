@@ -54,13 +54,7 @@ fn base_url() -> String {
 }
 
 fn build_client() -> Result<LangfuseClient, BoxError> {
-    let config = ClientConfig::builder(
-        std::env::var("LANGFUSE_PUBLIC_KEY")?,
-        std::env::var("LANGFUSE_SECRET_KEY")?,
-    )
-    .base_url(base_url())
-    .build()?;
-    Ok(LangfuseClient::new(config)?)
+    Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
 /// Everything the example created, so cleanup can remove it even after a failure.

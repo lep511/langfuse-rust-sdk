@@ -6,6 +6,7 @@ use crate::error::LangfuseError;
 use crate::http::{HttpClient, encode_path_segment};
 use crate::models::traces::{DeleteTraceResponse, DeleteTracesRequest};
 
+#[derive(Clone)]
 pub struct TracesClient {
     pub(crate) http: Arc<HttpClient>,
 }

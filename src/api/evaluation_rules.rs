@@ -7,12 +7,13 @@ use crate::http::{HttpClient, encode_path_segment};
 use crate::models::evaluation_rules::{
     CreateEvaluationRuleRequest, DeletedEvaluationRule, EvaluationRule, UpdateEvaluationRuleRequest,
 };
-use crate::pagination::{CursorPaginated, CursorParams};
+use crate::pagination::{CursorPaginated, CursorParams, Pages, paginate_cursor};
 
 const BASE: &str = "/api/public/v2/evaluation-rules";
 
 /// Evaluation rules. Error bodies follow
 /// [`PublicApiError`](crate::models::evaluation_common::PublicApiError).
+#[derive(Clone)]
 pub struct EvaluationRulesClient {
     pub(crate) http: Arc<HttpClient>,
 }
@@ -32,6 +33,15 @@ impl EvaluationRulesClient {
         params: &CursorParams,
     ) -> Result<CursorPaginated<EvaluationRule>, LangfuseError> {
         self.http.get_with_query(BASE, params).await
+    }
+
+    /// Lazily stream every page of [`list`](Self::list), following `meta.cursor`;
+    /// see [`pagination`](crate::pagination).
+    pub fn list_pages(&self, params: CursorParams) -> Pages<'_, CursorPaginated<EvaluationRule>> {
+        paginate_cursor(
+            params,
+            move |params| async move { self.list(&params).await },
+        )
     }
 
     /// `GET /api/public/v2/evaluation-rules/{evaluationRuleId}`

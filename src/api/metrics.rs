@@ -8,6 +8,7 @@ use crate::error::LangfuseError;
 use crate::http::HttpClient;
 use crate::models::metrics::{MetricsQuery, MetricsResponse};
 
+#[derive(Clone)]
 pub struct MetricsClient {
     pub(crate) http: Arc<HttpClient>,
 }
