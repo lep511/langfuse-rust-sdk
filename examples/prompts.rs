@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use langfuse_rust_sdk::api::prompts::{
-    GetPromptOptions, GetPromptParams, ListPromptsParams, PromptFallback, PromptSelector,
+    GetPromptOptions, GetPromptParams, ListPromptsParams, PromptFallback,
 };
 use langfuse_rust_sdk::models::prompts::{
     ChatMessage, ChatPromptMessage, CreatePromptRequest, Prompt,
@@ -83,11 +83,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Cached fetch: the second call is served from memory. The fallback is used
     // only if the prompt can be neither fetched nor found in the cache.
-    let options = GetPromptOptions {
-        selector: PromptSelector::label("staging"),
-        fallback: Some(PromptFallback::Text("Hello {{name}}!".into())),
-        ..Default::default()
-    };
+    let options = GetPromptOptions::default()
+        .with_label("staging")
+        .with_fallback(PromptFallback::Text("Hello {{name}}!".into()));
     let greeting = client
         .prompts
         .get_cached("rust-sdk-greeting", &options)
@@ -111,10 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .prompts
         .get_cached(
             "rust-sdk-assistant",
-            &GetPromptOptions {
-                selector: PromptSelector::label("latest"),
-                ..Default::default()
-            },
+            &GetPromptOptions::default().with_label("latest"),
         )
         .await?;
     let history = vec![

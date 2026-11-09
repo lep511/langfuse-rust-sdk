@@ -16,6 +16,8 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 - Prompt management: client-side cache with background refresh and fallbacks (`prompts.get_cached`), `{{variable}}` and placeholder compilation
 - `auth_check()` and `trace_url(trace_id)` helpers; `LangfuseClient` is cheap to `Clone`
 - Tracing on OpenTelemetry (feature `otel`): observations, context and attribute propagation, sampling, masking and batched export
+- Scores queued and sent in the background in batches (`client.score`)
+- Media attachments: upload, reference strings, resolution back to data URIs, and automatic upload of base64 media in traces
 
 ## Supported Resources
 
@@ -56,7 +58,7 @@ The unstable APIs may change without notice upstream. Enable them with:
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.5", features = ["unstable"] }
+langfuse-rust-sdk = { version = "0.6", features = ["unstable"] }
 ```
 
 ## Quick Start
@@ -134,7 +136,8 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`skills`](examples/skills.rs) | Create a skill version with files, fetch with content, list all |
 | [`observations`](examples/observations.rs) | List recent observations with a formatted table output |
 | [`otel_ingestion`](examples/otel_ingestion.rs) | Ingest an OpenTelemetry span with tags and print its URL in the UI (writes one trace) |
-| [`otel_tracing`](examples/otel_tracing.rs) | Trace a request with nested observations and user/session attributes (`--features otel`, writes one trace) |
+| [`otel_tracing`](examples/otel_tracing.rs) | Trace a request with nested observations, user/session attributes and a score (`--features otel`, writes one trace) |
+| [`media`](examples/media.rs) | Attach an image to a generation and resolve it back to a data URI (`--features otel`, writes a trace and media) |
 | [`error_handling`](examples/error_handling.rs) | Handle config errors, 404s, auth failures, and graceful fallbacks |
 | [`metrics_query`](examples/metrics_query.rs) | Query cost and tokens per model and a daily trend with the Metrics API (read-only) |
 | [`experiments`](examples/experiments.rs) | List recent experiments with scores and inspect their items (read-only) |
@@ -198,17 +201,16 @@ background task refreshes it, and a fallback can cover the first fetch when Lang
 unreachable. Creating, deleting or relabelling a prompt through the client invalidates it.
 
 ```rust
-use langfuse_rust_sdk::api::prompts::{GetPromptOptions, PromptFallback, PromptSelector};
+use langfuse_rust_sdk::api::prompts::{GetPromptOptions, PromptFallback};
 use langfuse_rust_sdk::models::prompts::ChatMessage;
 use serde_json::json;
 use std::time::Duration;
 
-let options = GetPromptOptions {
-    selector: PromptSelector::label("production"),        // default; or PromptSelector::Version(3)
-    cache_ttl: Some(Duration::from_secs(300)),             // default: 60 s (`prompt_cache_ttl`)
-    fallback: Some(PromptFallback::Text("Summarize: {{text}}".into())),
-    ..Default::default()                                   // also: max_retries, fetch_timeout
-};
+let options = GetPromptOptions::default()
+    .with_label("production")                             // default; or .with_version(3)
+    .with_cache_ttl(Duration::from_secs(300))             // default: 60 s (`prompt_cache_ttl`)
+    .with_fallback(PromptFallback::Text("Summarize: {{text}}".into()));
+    // also: with_max_retries, with_fetch_timeout
 let prompt = client.prompts.get_cached("summarizer", &options).await?;
 println!("{:?}", prompt.variables());                     // ["text"]
 let text = prompt.compile(&json!({"text": "..."}))?.into_text();
@@ -236,7 +238,7 @@ are inserted as compact JSON.
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.5", features = ["otel"] }
+langfuse-rust-sdk = { version = "0.6", features = ["otel"] }
 ```
 
 A `LangfuseTracer` creates observations as OpenTelemetry spans and exports them in the
@@ -252,12 +254,10 @@ let tracer = client.tracer(TracingOptions::from_env()?)?;   // inside a Tokio ru
 let request = tracer.start_observation("chat-request", ObservationType::Agent);
 request.set_input(&json!({"question": "Hi"}));
 
-let user = PropagatedAttributes {
-    user_id: Some("user-42".into()),
-    session_id: Some("session-7".into()),
-    tags: vec!["beta".into()],
-    ..Default::default()
-};
+let user = PropagatedAttributes::default()
+    .with_user_id("user-42")
+    .with_session_id("session-7")
+    .with_tag("beta");
 request
     .in_scope(propagate_attributes(user, async {
         let generation = tracer.start_observation("llm", ObservationType::Generation);
@@ -280,7 +280,7 @@ tracer.shutdown().await;   // export queued spans before exiting
   `otel::current_observation_id()`. The context follows the future, not spawned tasks: wrap
   those with `in_scope` too. `tracer.start_observation_in_trace(.., &TraceContext)`
   continues a trace started elsewhere.
-- **Options** (`TracingOptions`, or `from_env()` with `LANGFUSE_TRACING_ENVIRONMENT`,
+- **Options** (`TracingOptions::default().with_*(..)`, or `from_env()` with `LANGFUSE_TRACING_ENVIRONMENT`,
   `LANGFUSE_RELEASE`, `LANGFUSE_SAMPLE_RATE`, `LANGFUSE_TRACING_ENABLED`, `LANGFUSE_FLUSH_AT`,
   `LANGFUSE_FLUSH_INTERVAL`, `LANGFUSE_OTEL_MAX_BATCH_SIZE_BYTES`): environment, release,
   sampling, enabled, batching, `mask` (redacts input, output and metadata) and
@@ -290,6 +290,51 @@ tracer.shutdown().await;   // export queued spans before exiting
   instrumentation scope (`is_default_export_span`), or whatever `should_export_span` accepts.
   `#[tracing::instrument]` spans can be bridged with `tracing-opentelemetry` (see the `otel`
   module docs).
+- **Scores:** `observation.score(..)`, `observation.score_trace(..)`,
+  `tracer.score_current_span(..)` and `tracer.score_current_trace(..)` queue scores on the
+  client. `tracer.score(..)` queues any score but drops the ones whose trace is sampled out
+  (`client.score` does not know about sampling).
+- **Media:** base64 data URIs (and the base64 blocks of common LLM APIs) in exported span
+  attributes are uploaded and replaced by reference strings; `with_media_upload(false)` turns it
+  off.
+- **Flushing:** `tracer.flush()` / `tracer.shutdown()` export the spans first, then flush the
+  client's score and media queues (the export queues the media uploads), so one call covers
+  everything the tracer produced.
+
+## Scores in the background
+
+`client.score(..)` queues a score and returns at once; a background task sends scores in
+batches (15 scores or every second by default, see `ConfigBuilder::score_queue` and
+`LANGFUSE_FLUSH_AT` / `LANGFUSE_FLUSH_INTERVAL`). Call `flush` before a short-lived program exits.
+Use `scores.create` instead to send immediately and inspect the response.
+
+```rust
+use langfuse_rust_sdk::models::scores::{CreateScoreRequest, CreateScoreValue};
+
+client.score(CreateScoreRequest {
+    trace_id: Some(trace_id.clone()),
+    comment: Some("Thumbs up from the user".into()),
+    ..CreateScoreRequest::new("user-feedback", CreateScoreValue::Numeric(1.0))
+});
+client.flush().await;
+```
+
+## Media
+
+```rust
+use langfuse_rust_sdk::media::{LangfuseMedia, MediaField, MediaTarget};
+use langfuse_rust_sdk::models::media::MediaContentType;
+
+let image = LangfuseMedia::from_file("chart.png", MediaContentType::ImagePng)?;
+image.upload(&client, &MediaTarget::observation(&trace_id, &observation_id, MediaField::Input)).await?;
+let reference = image.reference_string();   // "@@@langfuseMedia:type=image/png|id=...|source=file@@@"
+
+// Data fetched from Langfuse contains reference strings; turn them back into data URIs:
+let resolved = client.media.resolve_references(&observation_input).await;
+```
+
+With the `otel` feature you rarely upload by hand: put the media (or any base64 data URI) in the
+traced data, e.g. `span.set_input(&json!({"image": image}))`, and it is uploaded during export.
 
 ## Pagination
 
@@ -368,11 +413,13 @@ src/
   prompt_cache.rs   — In-memory cache behind prompts.get_cached (crate-private)
   otel/             — Tracing on OpenTelemetry (feature `otel`): tracer, observations,
                       propagation, span processor, batched exporter
+  media.rs          — LangfuseMedia, references, upload, media detection in traced data
+  background.rs     — Score queue and media upload tasks of LangfuseClient (crate-private)
   models/           — Typed request/response structs for all resources
   api/              — Resource clients (one per API group)
 examples/           — 21 runnable examples covering all major features
 tests/              — wiremock HTTP tests (api_*), serde tests, config tests
-                      (480 tests in total with --all-features, 412 without)
+                      (525 tests in total with --all-features, 445 without)
 ```
 
 ## Requirements

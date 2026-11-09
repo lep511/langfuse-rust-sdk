@@ -4,6 +4,64 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.6.0] - 2026-11-09
+
+Scores sent in the background, and media attachments.
+
+### Breaking changes
+
+- The option structs `api::prompts::GetPromptOptions`,
+  `config::ScoreQueueOptions`, `otel::TracingOptions` and
+  `otel::PropagatedAttributes` are `#[non_exhaustive]`, so later options no
+  longer break your code. Struct literals (even with `..Default::default()`)
+  no longer compile outside the crate: start from `Default::default()` (or
+  `TracingOptions::from_env()`) and chain the new `with_*` methods, e.g.
+  `GetPromptOptions::default().with_label("staging").with_cache_ttl(ttl)` or
+  `PropagatedAttributes::default().with_user_id("u-1").with_tag("beta")`.
+  Fields stay public for reading and assignment.
+
+### Added
+
+- **Score queue**: `LangfuseClient::score(CreateScoreRequest)` queues a score
+  without blocking; a Tokio task sends batches to `POST /api/public/scores`
+  every `flush_interval` (1 s) or `flush_at` (15) scores, under 1,000,000
+  bytes per request (larger scores are dropped). Missing IDs are generated, so
+  failed batches are retried without duplicates; partial rejections (207) are
+  logged. `LangfuseClient::flush` / `shutdown` wait for the queue.
+  `ConfigBuilder::score_queue(ScoreQueueOptions)`, and `from_env()` reads
+  `LANGFUSE_FLUSH_AT`, `LANGFUSE_FLUSH_INTERVAL` and
+  `LANGFUSE_MAX_BATCH_SIZE_BYTES`.
+- **Scores from tracing** (`otel`): `Observation::score` / `score_trace` (with
+  the observation's environment; dropped for unsampled traces) and
+  `LangfuseTracer::score_current_span` / `score_current_trace`.
+  `LangfuseTracer::score` queues any score with the tracer's sampling: scores
+  of sampled-out traces are dropped (the decision depends only on the trace
+  ID, as for spans), scores without a W3C trace ID are always sent.
+  `LangfuseClient::score` does not sample.
+- **Media** (`media` module): `LangfuseMedia` from bytes, a file or a base64
+  data URI, with its SHA-256, media ID, reference string
+  (`@@@langfuseMedia:type=..|id=..|source=..@@@`) and data URI;
+  `LangfuseMedia::upload(&client, &MediaTarget)` requests the presigned URL,
+  uploads (retrying network errors, 429 and 5xx) and reports the outcome;
+  `MediaReference::parse`; `MediaClient::download` and
+  `MediaClient::resolve_references`, which turns references in fetched data
+  back into data URIs. `LangfuseMedia` serializes as a data URI.
+- **Automatic media upload** (`otel`): base64 data URIs and the base64 shapes
+  of common LLM APIs in exported span attributes (of any instrumentation) are
+  uploaded in the background and replaced by reference strings.
+  `TracingOptions::media_upload` / `LANGFUSE_MEDIA_UPLOAD_ENABLED` turn it off.
+- `MediaContentType::from_mime` / `mime`, and `Deserialize` for it.
+- `LangfuseError::Media` for invalid media and failed uploads or downloads.
+- Example `media` (`--features otel`); `otel_tracing` scores its generation.
+
+### Changed
+
+- `LangfuseTracer::flush` and `shutdown` also flush the client's scores and
+  media uploads, after the spans: exporting a span queues the uploads of its
+  media, so stopping at the spans would leave references to files not
+  uploaded yet. `shutdown` does not stop the client; `LangfuseClient::shutdown`
+  does.
+
 ## [0.5.0] - 2026-11-09
 
 Native tracing on OpenTelemetry, behind the new `otel` feature. Without the

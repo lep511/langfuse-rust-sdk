@@ -21,6 +21,7 @@ use super::attributes::{self as attr, flatten_metadata, io_value, js_safe, to_js
 use super::propagation::{PromptLink, PropagatedState, TRACE_ID_BAGGAGE_KEY};
 use super::tracer::TracerShared;
 use crate::models::prompts::Prompt;
+use crate::models::scores::CreateScoreRequest;
 
 /// Recorded instead of data whose mask function panicked.
 const MASK_FALLBACK: &str = "<fully masked due to failed mask function>";
@@ -207,6 +208,8 @@ struct Inner {
     id: String,
     start_time: SystemTime,
     recording: bool,
+    /// Effective environment: propagated, else the tracer default.
+    environment: Option<String>,
     shared: Arc<TracerShared>,
     state: Mutex<State>,
 }
@@ -274,6 +277,7 @@ impl Observation {
                 .insert(attr::RELEASE.into(), release.clone().into());
         }
 
+        let environment = propagated_environment.or_else(|| shared.environment.clone());
         Self {
             inner: Arc::new(Inner {
                 cx: parent_cx.with_span(span),
@@ -283,6 +287,7 @@ impl Observation {
                 id: span_context.span_id().to_string(),
                 start_time,
                 recording,
+                environment,
                 shared: Arc::clone(shared),
                 state: Mutex::new(state),
             }),
@@ -478,6 +483,44 @@ impl Observation {
             });
         }
         self
+    }
+
+    /// Score this observation: queues `score` on the client with this trace
+    /// and observation and, unless set, the observation's environment (see
+    /// [`LangfuseClient::score`](crate::LangfuseClient::score)). Dropped when
+    /// the observation is not recorded (sampled out or tracing disabled).
+    ///
+    /// ```rust,no_run
+    /// # use langfuse_rust_sdk::otel::Observation;
+    /// use langfuse_rust_sdk::models::scores::{CreateScoreRequest, CreateScoreValue};
+    /// # fn example(generation: &Observation) {
+    /// generation.score(CreateScoreRequest {
+    ///     comment: Some("Matches the reference answer".into()),
+    ///     ..CreateScoreRequest::new("correctness", CreateScoreValue::Numeric(0.9))
+    /// });
+    /// # }
+    /// ```
+    pub fn score(&self, mut score: CreateScoreRequest) {
+        score.observation_id = Some(self.inner.id.clone());
+        self.queue_score(score);
+    }
+
+    /// Score the whole trace of this observation; see [`score`](Self::score).
+    pub fn score_trace(&self, mut score: CreateScoreRequest) {
+        score.observation_id = None;
+        self.queue_score(score);
+    }
+
+    fn queue_score(&self, mut score: CreateScoreRequest) {
+        if !self.inner.recording {
+            tracing::debug!(score = %score.name, "observation not recorded; score dropped");
+            return;
+        }
+        score.trace_id = Some(self.inner.trace_id.clone());
+        if score.environment.is_none() {
+            score.environment = self.inner.environment.clone();
+        }
+        self.inner.shared.client.score(score);
     }
 
     /// End the observation now. Later calls do nothing.

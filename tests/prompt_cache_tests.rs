@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use common::*;
 use langfuse_rust_sdk::api::prompt_version::UpdatePromptVersionRequest;
-use langfuse_rust_sdk::api::prompts::{GetPromptOptions, PromptFallback, PromptSelector};
+use langfuse_rust_sdk::api::prompts::{GetPromptOptions, PromptFallback};
 use langfuse_rust_sdk::models::prompts::{ChatPromptMessage, CreatePromptRequest, Prompt};
 use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError, RetryPolicy};
 use serde_json::{Value, json};
@@ -59,15 +59,11 @@ async fn wait_for_gets(server: &MockServer, count: usize) {
 }
 
 fn ttl(ms: u64) -> GetPromptOptions {
-    GetPromptOptions {
-        cache_ttl: Some(Duration::from_millis(ms)),
-        ..Default::default()
-    }
+    GetPromptOptions::default().with_cache_ttl(Duration::from_millis(ms))
 }
 
-fn with_fallback(mut options: GetPromptOptions, text: &str) -> GetPromptOptions {
-    options.fallback = Some(PromptFallback::Text(text.into()));
-    options
+fn with_fallback(options: GetPromptOptions, text: &str) -> GetPromptOptions {
+    options.with_fallback(PromptFallback::Text(text.into()))
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -115,14 +111,8 @@ async fn labels_and_versions_are_cached_separately() {
         .await;
 
     for _ in 0..2 {
-        let staging = GetPromptOptions {
-            selector: PromptSelector::label("staging"),
-            ..Default::default()
-        };
-        let version = GetPromptOptions {
-            selector: PromptSelector::Version(2),
-            ..Default::default()
-        };
+        let staging = GetPromptOptions::default().with_label("staging");
+        let version = GetPromptOptions::default().with_version(2);
         assert_eq!(
             client
                 .prompts
@@ -149,10 +139,7 @@ async fn zero_ttl_bypasses_the_cache() {
     let (client, server) = test_client().await;
     mount_version(&server, 1, None).await;
 
-    let options = GetPromptOptions {
-        cache_ttl: Some(Duration::ZERO),
-        ..Default::default()
-    };
+    let options = GetPromptOptions::default().with_cache_ttl(Duration::ZERO);
     client
         .prompts
         .get_cached("greeting", &options)
@@ -454,14 +441,12 @@ async fn chat_fallback_for_a_pinned_version() {
         .mount(&server)
         .await;
 
-    let options = GetPromptOptions {
-        selector: PromptSelector::Version(3),
-        fallback: Some(PromptFallback::Chat(vec![
+    let options = GetPromptOptions::default()
+        .with_version(3)
+        .with_fallback(PromptFallback::Chat(vec![
             ChatPromptMessage::message("system", "Be {{tone}}"),
             ChatPromptMessage::placeholder("history"),
-        ])),
-        ..Default::default()
-    };
+        ]));
     let prompt = client
         .prompts
         .get_cached("greeting", &options)
@@ -508,10 +493,7 @@ async fn max_retries_per_call_overrides_the_client_policy() {
         .await;
     mount_version(&server, 1, None).await;
 
-    let options = GetPromptOptions {
-        max_retries: Some(1),
-        ..Default::default()
-    };
+    let options = GetPromptOptions::default().with_max_retries(1);
     let prompt = client
         .prompts
         .get_cached("greeting", &options)
@@ -530,10 +512,7 @@ async fn zero_retries_per_call_overrides_a_retrying_client() {
         .mount(&server)
         .await;
 
-    let options = GetPromptOptions {
-        max_retries: Some(0),
-        ..Default::default()
-    };
+    let options = GetPromptOptions::default().with_max_retries(0);
     assert!(
         client
             .prompts
@@ -557,10 +536,7 @@ async fn fetch_timeout_per_call() {
         .mount(&server)
         .await;
 
-    let options = GetPromptOptions {
-        fetch_timeout: Some(Duration::from_millis(50)),
-        ..Default::default()
-    };
+    let options = GetPromptOptions::default().with_fetch_timeout(Duration::from_millis(50));
     let err = client
         .prompts
         .get_cached("greeting", &options)

@@ -85,6 +85,28 @@ impl HttpClient {
         &self.base_url
     }
 
+    /// The underlying `reqwest` client, for requests outside the Langfuse API
+    /// (presigned media URLs) that must not carry its credentials.
+    pub(crate) fn raw_client(&self) -> &Client {
+        &self.client
+    }
+
+    /// The retry policy of the client.
+    pub(crate) fn retry_policy(&self) -> &RetryPolicy {
+        &self.retry_policy
+    }
+
+    /// POST with per-request options; deserializes the JSON response.
+    pub(crate) async fn post_with_options<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+        options: RequestOptions<'_>,
+    ) -> Result<T, LangfuseError> {
+        self.request(Method::POST, path, Some(body), None::<&()>, options)
+            .await
+    }
+
     /// Send a GET request and deserialize the JSON response.
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, LangfuseError> {
         self.request(

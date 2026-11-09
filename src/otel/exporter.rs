@@ -10,7 +10,8 @@ use opentelemetry_sdk::trace::SpanData;
 use tokio::sync::{mpsc, oneshot};
 
 use super::attributes::dedupe_last_wins;
-use crate::api::ingestion::IngestionClient;
+use crate::LangfuseClient;
+use crate::media::{MediaTarget, extract_from_attribute, field_for_attribute};
 use crate::models::ingestion::{
     IngestTracesRequest, OtelAnyValue, OtelInstrumentationScope, OtelKeyValue, OtelResource,
     OtelResourceSpan, OtelScopeSpan, OtelSpan, OtelSpanEvent, OtelSpanLink, OtelStatus,
@@ -26,7 +27,9 @@ pub(crate) enum Command {
 }
 
 pub(crate) struct ExportTask {
-    pub(crate) ingestion: IngestionClient,
+    /// Sends the spans and uploads media found in them.
+    pub(crate) client: LangfuseClient,
+    pub(crate) media_upload: bool,
     pub(crate) resource: Arc<OnceLock<Resource>>,
     pub(crate) flush_at: usize,
     pub(crate) flush_interval: Duration,
@@ -80,9 +83,12 @@ impl ExportTask {
         }
     }
 
-    async fn export(&self, spans: Vec<SpanData>) {
+    async fn export(&self, mut spans: Vec<SpanData>) {
         if spans.is_empty() {
             return;
+        }
+        if self.media_upload {
+            spans.iter_mut().for_each(|span| self.upload_media(span));
         }
         let resource = resource_attributes(self.resource.get());
         for batch in split_by_size(
@@ -99,10 +105,47 @@ impl ExportTask {
                     scope_spans: batch,
                 }],
             };
-            if let Err(err) = self.ingestion.ingest_traces(&request).await {
+            if let Err(err) = self.client.ingestion.ingest_traces(&request).await {
                 tracing::warn!(spans = count, error = %err, "failed to export spans to Langfuse");
             } else {
                 tracing::debug!(spans = count, "exported spans to Langfuse");
+            }
+        }
+    }
+}
+
+impl ExportTask {
+    /// Replace base64 media in the string attributes of `span` by reference
+    /// strings and queue the uploads, linked to the span's observation.
+    fn upload_media(&self, span: &mut SpanData) {
+        let trace_id = span.span_context.trace_id().to_string();
+        let span_id = span.span_context.span_id().to_string();
+        span.attributes = dedupe_last_wins(std::mem::take(&mut span.attributes));
+        for kv in &mut span.attributes {
+            let mut found = Vec::new();
+            match &mut kv.value {
+                OtelValue::String(text) => {
+                    if let Some(rewritten) = extract_from_attribute(text.as_str(), &mut found) {
+                        *text = rewritten.into();
+                    }
+                }
+                OtelValue::Array(Array::String(items)) => {
+                    for item in items.iter_mut() {
+                        if let Some(rewritten) = extract_from_attribute(item.as_str(), &mut found) {
+                            *item = rewritten.into();
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if !found.is_empty() {
+                let field = field_for_attribute(kv.key.as_str());
+                for media in found {
+                    self.client.queue_media_upload(
+                        media,
+                        MediaTarget::observation(&trace_id, &span_id, field),
+                    );
+                }
             }
         }
     }

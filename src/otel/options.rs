@@ -29,10 +29,28 @@ pub const ENV_FLUSH_AT: &str = "LANGFUSE_FLUSH_AT";
 pub const ENV_FLUSH_INTERVAL: &str = "LANGFUSE_FLUSH_INTERVAL";
 /// Environment variable with the maximum size of one export request in bytes.
 pub const ENV_MAX_BATCH_SIZE_BYTES: &str = "LANGFUSE_OTEL_MAX_BATCH_SIZE_BYTES";
+/// Environment variable that disables media upload when `false` or `0`.
+pub const ENV_MEDIA_UPLOAD_ENABLED: &str = "LANGFUSE_MEDIA_UPLOAD_ENABLED";
 
 /// Options of [`LangfuseTracer::new`](super::LangfuseTracer::new); every field
 /// has a default.
+///
+/// Build it from [`TracingOptions::default`] (or [`from_env`](Self::from_env))
+/// with the `with_*` methods; new options can then be added without breaking
+/// your code. The fields stay public for reading and assignment.
+///
+/// ```
+/// use langfuse_rust_sdk::otel::TracingOptions;
+/// use std::time::Duration;
+///
+/// let options = TracingOptions::default()
+///     .with_environment("production")
+///     .with_sample_rate(0.25)
+///     .with_flush_interval(Duration::from_secs(2));
+/// assert_eq!(options.sample_rate, 0.25);
+/// ```
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct TracingOptions {
     /// Environment of every observation unless a propagated one applies
     /// (default: none, which Langfuse shows as `default`).
@@ -59,6 +77,9 @@ pub struct TracingOptions {
     /// [`is_default_export_span`](super::is_default_export_span): Langfuse
     /// observations, `gen_ai.*` spans and known LLM instrumentations).
     pub should_export_span: Option<ExportFilter>,
+    /// Upload base64 media found in exported span attributes and replace it
+    /// with its reference string (default: `true`); see [`crate::media`].
+    pub media_upload: bool,
 }
 
 impl Default for TracingOptions {
@@ -74,6 +95,7 @@ impl Default for TracingOptions {
             max_batch_bytes: 1024 * 1024,
             mask: None,
             should_export_span: None,
+            media_upload: true,
         }
     }
 }
@@ -94,11 +116,84 @@ impl fmt::Debug for TracingOptions {
                 "should_export_span",
                 &self.should_export_span.as_ref().map(|_| "<fn>"),
             )
+            .field("media_upload", &self.media_upload)
             .finish()
     }
 }
 
 impl TracingOptions {
+    /// Set [`environment`](Self::environment).
+    pub fn with_environment(mut self, environment: impl Into<String>) -> Self {
+        self.environment = Some(environment.into());
+        self
+    }
+
+    /// Set [`release`](Self::release).
+    pub fn with_release(mut self, release: impl Into<String>) -> Self {
+        self.release = Some(release.into());
+        self
+    }
+
+    /// Set [`sample_rate`](Self::sample_rate).
+    pub fn with_sample_rate(mut self, sample_rate: f64) -> Self {
+        self.sample_rate = sample_rate;
+        self
+    }
+
+    /// Set [`enabled`](Self::enabled).
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Set [`flush_at`](Self::flush_at).
+    pub fn with_flush_at(mut self, flush_at: usize) -> Self {
+        self.flush_at = flush_at;
+        self
+    }
+
+    /// Set [`flush_interval`](Self::flush_interval).
+    pub fn with_flush_interval(mut self, flush_interval: Duration) -> Self {
+        self.flush_interval = flush_interval;
+        self
+    }
+
+    /// Set [`max_queue_size`](Self::max_queue_size).
+    pub fn with_max_queue_size(mut self, max_queue_size: usize) -> Self {
+        self.max_queue_size = max_queue_size;
+        self
+    }
+
+    /// Set [`max_batch_bytes`](Self::max_batch_bytes).
+    pub fn with_max_batch_bytes(mut self, max_batch_bytes: usize) -> Self {
+        self.max_batch_bytes = max_batch_bytes;
+        self
+    }
+
+    /// Set [`mask`](Self::mask).
+    pub fn with_mask<F>(mut self, mask: F) -> Self
+    where
+        F: Fn(serde_json::Value) -> serde_json::Value + Send + Sync + 'static,
+    {
+        self.mask = Some(Arc::new(mask));
+        self
+    }
+
+    /// Set [`should_export_span`](Self::should_export_span).
+    pub fn with_should_export_span<F>(mut self, filter: F) -> Self
+    where
+        F: Fn(&SpanData) -> bool + Send + Sync + 'static,
+    {
+        self.should_export_span = Some(Arc::new(filter));
+        self
+    }
+
+    /// Set [`media_upload`](Self::media_upload).
+    pub fn with_media_upload(mut self, media_upload: bool) -> Self {
+        self.media_upload = media_upload;
+        self
+    }
+
     /// Defaults overridden by the `LANGFUSE_*` tracing variables:
     ///
     /// | Variable | Field |
@@ -110,6 +205,7 @@ impl TracingOptions {
     /// | `LANGFUSE_FLUSH_AT` | `flush_at` |
     /// | `LANGFUSE_FLUSH_INTERVAL` (seconds) | `flush_interval` |
     /// | `LANGFUSE_OTEL_MAX_BATCH_SIZE_BYTES` | `max_batch_bytes` |
+    /// | `LANGFUSE_MEDIA_UPLOAD_ENABLED` (`false`/`0` disable) | `media_upload` |
     ///
     /// Empty values count as unset; invalid numbers return
     /// [`LangfuseError::Config`].
@@ -142,6 +238,9 @@ impl TracingOptions {
         }
         if let Some(raw) = var(ENV_TRACING_ENABLED) {
             options.enabled = !matches!(raw.to_ascii_lowercase().as_str(), "false" | "0");
+        }
+        if let Some(raw) = var(ENV_MEDIA_UPLOAD_ENABLED) {
+            options.media_upload = !matches!(raw.to_ascii_lowercase().as_str(), "false" | "0");
         }
         if let Some(raw) = var(ENV_FLUSH_AT) {
             options.flush_at = raw
@@ -209,8 +308,10 @@ mod tests {
             ("LANGFUSE_FLUSH_AT", "10"),
             ("LANGFUSE_FLUSH_INTERVAL", "0.5"),
             ("LANGFUSE_OTEL_MAX_BATCH_SIZE_BYTES", "2048"),
+            ("LANGFUSE_MEDIA_UPLOAD_ENABLED", "0"),
         ])
         .unwrap();
+        assert!(!options.media_upload);
         assert_eq!(options.environment.as_deref(), Some("staging"));
         assert_eq!(options.release.as_deref(), Some("v1.2"));
         assert_eq!(options.sample_rate, 0.25);

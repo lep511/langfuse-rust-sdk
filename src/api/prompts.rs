@@ -9,10 +9,8 @@
 //! # use langfuse_rust_sdk::LangfuseClient;
 //! # use serde_json::json;
 //! # async fn example(client: &LangfuseClient) -> Result<(), langfuse_rust_sdk::LangfuseError> {
-//! let options = GetPromptOptions {
-//!     fallback: Some(PromptFallback::Text("Summarize: {{text}}".into())),
-//!     ..Default::default()
-//! };
+//! let options = GetPromptOptions::default()
+//!     .with_fallback(PromptFallback::Text("Summarize: {{text}}".into()));
 //! let prompt = client.prompts.get_cached("summarizer", &options).await?;
 //! let text = prompt.compile(&json!({"text": "..."}))?.into_text();
 //! # Ok(())
@@ -74,7 +72,11 @@ pub enum PromptFallback {
 }
 
 /// Options of [`PromptsClient::get_cached`]; every field has a default.
+///
+/// Build it from [`GetPromptOptions::default`] with the `with_*` methods, so
+/// new options can be added without breaking your code.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct GetPromptOptions {
     /// Label or version to fetch (default: label `production`).
     pub selector: PromptSelector,
@@ -95,6 +97,46 @@ pub struct GetPromptOptions {
 }
 
 impl GetPromptOptions {
+    /// Set [`selector`](Self::selector).
+    pub fn with_selector(mut self, selector: PromptSelector) -> Self {
+        self.selector = selector;
+        self
+    }
+
+    /// Fetch the version carrying `label`.
+    pub fn with_label(self, label: impl Into<String>) -> Self {
+        self.with_selector(PromptSelector::Label(label.into()))
+    }
+
+    /// Fetch version `version`.
+    pub fn with_version(self, version: i64) -> Self {
+        self.with_selector(PromptSelector::Version(version))
+    }
+
+    /// Set [`cache_ttl`](Self::cache_ttl).
+    pub fn with_cache_ttl(mut self, ttl: Duration) -> Self {
+        self.cache_ttl = Some(ttl);
+        self
+    }
+
+    /// Set [`fallback`](Self::fallback).
+    pub fn with_fallback(mut self, fallback: PromptFallback) -> Self {
+        self.fallback = Some(fallback);
+        self
+    }
+
+    /// Set [`max_retries`](Self::max_retries).
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = Some(max_retries);
+        self
+    }
+
+    /// Set [`fetch_timeout`](Self::fetch_timeout).
+    pub fn with_fetch_timeout(mut self, timeout: Duration) -> Self {
+        self.fetch_timeout = Some(timeout);
+        self
+    }
+
     fn request_options(&self) -> RequestOptions<'static> {
         RequestOptions {
             max_retries: self.max_retries,

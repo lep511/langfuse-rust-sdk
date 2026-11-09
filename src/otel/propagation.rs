@@ -29,7 +29,11 @@ const MAX_ENVIRONMENT_CHARS: usize = 40;
 /// Values longer than 200 characters (40 for `environment`) are dropped with a
 /// warning; `environment` must be lowercase letters, digits, `-` or `_` and
 /// must not start with `langfuse`.
+///
+/// Build it from [`PropagatedAttributes::default`] with the `with_*` methods,
+/// so new attributes can be added without breaking your code.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct PropagatedAttributes {
     /// User of the trace.
     pub user_id: Option<String>,
@@ -54,6 +58,72 @@ pub struct PropagatedAttributes {
 }
 
 impl PropagatedAttributes {
+    /// Set [`user_id`](Self::user_id).
+    pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
+        self.user_id = Some(user_id.into());
+        self
+    }
+
+    /// Set [`session_id`](Self::session_id).
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Set [`version`](Self::version).
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
+        self
+    }
+
+    /// Replace [`tags`](Self::tags).
+    pub fn with_tags<I, S>(mut self, tags: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.tags = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Add one tag.
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tags.push(tag.into());
+        self
+    }
+
+    /// Set [`trace_name`](Self::trace_name).
+    pub fn with_trace_name(mut self, trace_name: impl Into<String>) -> Self {
+        self.trace_name = Some(trace_name.into());
+        self
+    }
+
+    /// Set [`environment`](Self::environment).
+    pub fn with_environment(mut self, environment: impl Into<String>) -> Self {
+        self.environment = Some(environment.into());
+        self
+    }
+
+    /// Link `prompt` (ignored for fallback prompts); see [`PromptLink::from_prompt`].
+    pub fn with_prompt(mut self, prompt: &Prompt) -> Self {
+        if let Some(link) = PromptLink::from_prompt(prompt) {
+            self.prompt = Some(link);
+        }
+        self
+    }
+
+    /// Set [`prompt`](Self::prompt).
+    pub fn with_prompt_link(mut self, prompt: PromptLink) -> Self {
+        self.prompt = Some(prompt);
+        self
+    }
+
+    /// Set [`as_baggage`](Self::as_baggage).
+    pub fn with_baggage(mut self, as_baggage: bool) -> Self {
+        self.as_baggage = as_baggage;
+        self
+    }
+
     /// Set `metadata[key]` to `value` (anything serializable).
     pub fn with_metadata<T: Serialize + ?Sized>(
         mut self,
@@ -100,12 +170,10 @@ impl PromptLink {
 ///
 /// # async fn handle() {}
 /// # async fn example() {
-/// let attributes = PropagatedAttributes {
-///     user_id: Some("user-42".into()),
-///     session_id: Some("chat-7".into()),
-///     tags: vec!["beta".into()],
-///     ..Default::default()
-/// };
+/// let attributes = PropagatedAttributes::default()
+///     .with_user_id("user-42")
+///     .with_session_id("chat-7")
+///     .with_tag("beta");
 /// propagate_attributes(attributes, handle()).await;
 /// # }
 /// ```

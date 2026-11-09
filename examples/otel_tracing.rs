@@ -1,7 +1,7 @@
 //! Trace a chat request with nested observations (agent, retriever, generation,
-//! event), user and session attributes, and print the trace URL.
+//! event), user and session attributes and a score, and print the trace URL.
 //!
-//! Writes data: one trace, kept so you can open it. Delete it in the UI or with
+//! Writes data: one trace and one score, kept so you can open them. Delete it in the UI or with
 //! `client.traces.delete(trace_id)`.
 //!
 //! ```sh
@@ -11,6 +11,7 @@
 
 use std::time::Duration;
 
+use langfuse_rust_sdk::models::scores::{CreateScoreRequest, CreateScoreValue};
 use langfuse_rust_sdk::otel::{
     Level, ObservationType, PropagatedAttributes, TracingOptions, propagate_attributes,
 };
@@ -28,13 +29,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let agent = tracer.start_observation("support-agent", ObservationType::Agent);
     agent.set_input(&json!({"question": question}));
 
-    let user = PropagatedAttributes {
-        user_id: Some("user-42".into()),
-        session_id: Some("support-chat-7".into()),
-        tags: vec!["rust-sdk".into(), "example".into()],
-        trace_name: Some("support-request".into()),
-        ..Default::default()
-    };
+    let user = PropagatedAttributes::default()
+        .with_user_id("user-42")
+        .with_session_id("support-chat-7")
+        .with_tags(["rust-sdk", "example"])
+        .with_trace_name("support-request");
 
     let answer = agent
         .in_scope(propagate_attributes(user, async {
@@ -57,6 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             generation
                 .set_output(answer)
                 .set_usage_details(&json!({"input": 32, "output": 9}));
+            // Scores are queued and sent in the background.
+            generation.score(CreateScoreRequest {
+                comment: Some("Mentions the delivery date".into()),
+                ..CreateScoreRequest::new("helpfulness", CreateScoreValue::Numeric(0.9))
+            });
             generation.end();
 
             let event = tracer.start_observation("cache-miss", ObservationType::Event);

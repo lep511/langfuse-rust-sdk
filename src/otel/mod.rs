@@ -18,11 +18,9 @@
 //! let request = tracer.start_observation("chat-request", ObservationType::Span);
 //! request.set_input(&json!({"question": "Hi"}));
 //!
-//! let user = PropagatedAttributes {
-//!     user_id: Some("user-42".into()),
-//!     session_id: Some("session-7".into()),
-//!     ..Default::default()
-//! };
+//! let user = PropagatedAttributes::default()
+//!     .with_user_id("user-42")
+//!     .with_session_id("session-7");
 //! let answer = request
 //!     .in_scope(propagate_attributes(user, async {
 //!         // Child of `request`, with user and session set.
@@ -102,8 +100,9 @@ pub use observation::{
     Level, Observation, ObservationType, TraceContext, current_observation_id, current_trace_id,
 };
 pub use options::{
-    ENV_FLUSH_AT, ENV_FLUSH_INTERVAL, ENV_MAX_BATCH_SIZE_BYTES, ENV_RELEASE, ENV_SAMPLE_RATE,
-    ENV_TRACING_ENABLED, ENV_TRACING_ENVIRONMENT, ExportFilter, MaskFn, TracingOptions,
+    ENV_FLUSH_AT, ENV_FLUSH_INTERVAL, ENV_MAX_BATCH_SIZE_BYTES, ENV_MEDIA_UPLOAD_ENABLED,
+    ENV_RELEASE, ENV_SAMPLE_RATE, ENV_TRACING_ENABLED, ENV_TRACING_ENVIRONMENT, ExportFilter,
+    MaskFn, TracingOptions,
 };
 pub use processor::{
     KNOWN_LLM_INSTRUMENTATION_SCOPE_PREFIXES, LANGFUSE_TRACER_NAME, is_default_export_span,

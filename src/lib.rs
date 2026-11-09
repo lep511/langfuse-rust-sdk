@@ -56,6 +56,12 @@
 //!     .expect("valid config");
 //! ```
 //!
+//! # Scores and media
+//!
+//! [`LangfuseClient::score`] queues scores that a background task sends in
+//! batches; [`media::LangfuseMedia`] uploads files and builds the reference
+//! strings Langfuse uses for them.
+//!
 //! # Tracing
 //!
 //! With the `otel` feature, `LangfuseClient::tracer` returns an
@@ -93,9 +99,12 @@ pub mod error;
 pub mod http;
 /// Trace and observation ID generation (random or derived from a seed).
 pub mod ids;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+pub mod media;
 /// Request and response model structs generated from the OpenAPI spec.
 pub mod models;
 // Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+mod background;
 #[cfg(feature = "otel")]
 pub mod otel;
 /// Pagination helpers for list endpoints.
@@ -218,6 +227,8 @@ pub struct LangfuseClient {
     /// Project of the API keys, resolved once by [`Self::auth_check`].
     project_id: Arc<OnceLock<String>>,
     public_key: Arc<str>,
+    /// Score queue and media uploads, shared by clones.
+    background: Arc<background::Background>,
 }
 
 impl LangfuseClient {
@@ -225,7 +236,9 @@ impl LangfuseClient {
     pub fn new(config: ClientConfig) -> Result<Self, LangfuseError> {
         let prompt_cache = Arc::new(prompt_cache::PromptCache::new(config.prompt_cache_ttl));
         let public_key: Arc<str> = Arc::from(config.public_key.as_str());
+        let score_queue = config.score_queue.clone();
         let http = Arc::new(HttpClient::new(config)?);
+        let background = Arc::new(background::Background::new(Arc::clone(&http), score_queue));
         Ok(Self {
             health: HealthClient {
                 http: Arc::clone(&http),
@@ -319,7 +332,53 @@ impl LangfuseClient {
             http,
             project_id: Arc::new(OnceLock::new()),
             public_key,
+            background,
         })
+    }
+
+    /// Queue a score; it is sent in the background with others in one request
+    /// (see [`ConfigBuilder::score_queue`]). Never blocks and never fails:
+    /// problems are logged through `tracing`.
+    ///
+    /// A missing `id` is generated (so a retried batch does not duplicate the
+    /// score) and a missing `timestamp` is set to now. The first call must
+    /// happen inside a Tokio runtime, which runs the sending task. Call
+    /// [`flush`](Self::flush) (or [`shutdown`](Self::shutdown)) before the
+    /// program exits. Use [`scores.create`](ScoresClient::create) to send
+    /// immediately and get the response.
+    ///
+    /// The client does not know about tracing: with a sampling tracer
+    /// (feature `otel`), score through `LangfuseTracer::score`, which drops
+    /// the scores of sampled-out traces.
+    pub fn score(&self, mut score: models::scores::CreateScoreRequest) {
+        if score.id.is_none() {
+            score.id = Some(ids::create_observation_id(None));
+        }
+        if score.timestamp.is_none() {
+            score.timestamp = Some(chrono::Utc::now());
+        }
+        self.background.enqueue_score(score);
+    }
+
+    /// Send every queued score and finish every queued media upload.
+    pub async fn flush(&self) {
+        self.background.flush().await;
+    }
+
+    /// Flush, then stop the background tasks: later scores and media uploads
+    /// are dropped. Affects every clone of this client.
+    pub async fn shutdown(&self) {
+        self.background.shutdown().await;
+    }
+
+    /// Upload `media` in the background (used by the `otel` exporter).
+    #[cfg_attr(not(feature = "otel"), allow(dead_code))]
+    pub(crate) fn queue_media_upload(
+        &self,
+        media: media::LangfuseMedia,
+        target: media::MediaTarget,
+    ) {
+        self.background.enqueue_media(media, target);
     }
 
     /// The public API key of this client.

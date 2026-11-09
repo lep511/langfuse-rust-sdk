@@ -82,7 +82,7 @@ pub struct GetMediaUploadUrlResponse {
 }
 
 /// MIME type of a media upload (spec `MediaContentType`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MediaContentType {
     #[serde(rename = "image/png")]
     ImagePng,
@@ -188,4 +188,20 @@ pub enum MediaContentType {
     ApplicationXTar,
     #[serde(rename = "application/x-7z-compressed")]
     ApplicationX7zCompressed,
+}
+
+impl MediaContentType {
+    /// The content type for a MIME string such as `image/png`, if Langfuse
+    /// accepts it.
+    pub fn from_mime(mime: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(mime.trim().to_ascii_lowercase())).ok()
+    }
+
+    /// The MIME string, e.g. `image/png`.
+    pub fn mime(&self) -> String {
+        match serde_json::to_value(self) {
+            Ok(serde_json::Value::String(mime)) => mime,
+            _ => unreachable!("MediaContentType serializes to a string"),
+        }
+    }
 }

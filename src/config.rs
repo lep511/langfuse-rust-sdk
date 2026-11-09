@@ -27,6 +27,70 @@ pub const ENV_HOST: &str = "LANGFUSE_HOST";
 pub const ENV_TIMEOUT: &str = "LANGFUSE_TIMEOUT";
 /// Environment variable holding the default prompt cache TTL in seconds (`0` disables caching).
 pub const ENV_PROMPT_CACHE_TTL: &str = "LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS";
+/// Environment variable with the number of queued scores that triggers a send.
+pub const ENV_FLUSH_AT: &str = "LANGFUSE_FLUSH_AT";
+/// Environment variable with the send interval of queued scores, in seconds.
+pub const ENV_FLUSH_INTERVAL: &str = "LANGFUSE_FLUSH_INTERVAL";
+/// Environment variable with the maximum body size of one score batch, in bytes.
+pub const ENV_MAX_BATCH_SIZE_BYTES: &str = "LANGFUSE_MAX_BATCH_SIZE_BYTES";
+
+/// Body size limit of `POST /api/public/scores`.
+const SCORES_BODY_LIMIT_BYTES: usize = 1_000_000;
+
+/// Batching of [`LangfuseClient::score`](crate::LangfuseClient::score).
+///
+/// Build it from [`ScoreQueueOptions::default`] with the `with_*` methods, so
+/// new options can be added without breaking your code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ScoreQueueOptions {
+    /// Send as soon as this many scores are queued (default: 15).
+    pub flush_at: usize,
+    /// Send queued scores at least this often (default: 1 s).
+    pub flush_interval: Duration,
+    /// Keep each request body under this many bytes (default and maximum:
+    /// 1,000,000, the limit of the endpoint). Larger scores are dropped.
+    pub max_batch_bytes: usize,
+    /// Scores kept in memory before new ones are dropped (default: 100,000).
+    pub max_queue_size: usize,
+}
+
+impl ScoreQueueOptions {
+    /// Set [`flush_at`](Self::flush_at).
+    pub fn with_flush_at(mut self, flush_at: usize) -> Self {
+        self.flush_at = flush_at;
+        self
+    }
+
+    /// Set [`flush_interval`](Self::flush_interval).
+    pub fn with_flush_interval(mut self, flush_interval: Duration) -> Self {
+        self.flush_interval = flush_interval;
+        self
+    }
+
+    /// Set [`max_batch_bytes`](Self::max_batch_bytes).
+    pub fn with_max_batch_bytes(mut self, max_batch_bytes: usize) -> Self {
+        self.max_batch_bytes = max_batch_bytes;
+        self
+    }
+
+    /// Set [`max_queue_size`](Self::max_queue_size).
+    pub fn with_max_queue_size(mut self, max_queue_size: usize) -> Self {
+        self.max_queue_size = max_queue_size;
+        self
+    }
+}
+
+impl Default for ScoreQueueOptions {
+    fn default() -> Self {
+        Self {
+            flush_at: 15,
+            flush_interval: Duration::from_secs(1),
+            max_batch_bytes: SCORES_BODY_LIMIT_BYTES,
+            max_queue_size: 100_000,
+        }
+    }
+}
 
 /// Resolved configuration consumed by [`LangfuseClient::new`](crate::LangfuseClient::new).
 ///
@@ -42,6 +106,7 @@ pub struct ClientConfig {
     pub(crate) retry_policy: RetryPolicy,
     pub(crate) http_client: Option<reqwest::Client>,
     pub(crate) prompt_cache_ttl: Duration,
+    pub(crate) score_queue: ScoreQueueOptions,
 }
 
 impl ClientConfig {
@@ -57,6 +122,7 @@ impl ClientConfig {
             header_error: None,
             http_client: None,
             prompt_cache_ttl: None,
+            score_queue: None,
         }
     }
 
@@ -86,6 +152,11 @@ impl ClientConfig {
     pub fn prompt_cache_ttl(&self) -> Duration {
         self.prompt_cache_ttl
     }
+
+    /// Batching of queued scores.
+    pub fn score_queue(&self) -> &ScoreQueueOptions {
+        &self.score_queue
+    }
 }
 
 /// Builder for [`ClientConfig`].
@@ -102,6 +173,7 @@ pub struct ConfigBuilder {
     header_error: Option<String>,
     http_client: Option<reqwest::Client>,
     prompt_cache_ttl: Option<Duration>,
+    score_queue: Option<ScoreQueueOptions>,
 }
 
 impl ConfigBuilder {
@@ -116,6 +188,9 @@ impl ConfigBuilder {
     /// | `LANGFUSE_HOST` | Deprecated alias of `LANGFUSE_BASE_URL`, used only when that is unset |
     /// | `LANGFUSE_TIMEOUT` | Request timeout in seconds, e.g. `10` or `2.5` (default: 30) |
     /// | `LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS` | Default prompt cache TTL in seconds; `0` disables caching (default: 60) |
+    /// | `LANGFUSE_FLUSH_AT` | Queued scores that trigger a send (default: 15) |
+    /// | `LANGFUSE_FLUSH_INTERVAL` | Score send interval in seconds (default: 1) |
+    /// | `LANGFUSE_MAX_BATCH_SIZE_BYTES` | Maximum score batch body in bytes (default and maximum: 1,000,000) |
     ///
     /// Empty values count as unset. Missing keys and invalid numbers return
     /// [`LangfuseError::Config`]. The variables are
@@ -144,6 +219,19 @@ impl ConfigBuilder {
         }
         if let Some(raw) = var(ENV_PROMPT_CACHE_TTL) {
             builder = builder.prompt_cache_ttl(parse_secs(ENV_PROMPT_CACHE_TTL, &raw, true)?);
+        }
+        let mut queue = ScoreQueueOptions::default();
+        if let Some(raw) = var(ENV_FLUSH_AT) {
+            queue.flush_at = parse_count(ENV_FLUSH_AT, &raw)?;
+        }
+        if let Some(raw) = var(ENV_FLUSH_INTERVAL) {
+            queue.flush_interval = parse_secs(ENV_FLUSH_INTERVAL, &raw, false)?;
+        }
+        if let Some(raw) = var(ENV_MAX_BATCH_SIZE_BYTES) {
+            queue.max_batch_bytes = parse_count(ENV_MAX_BATCH_SIZE_BYTES, &raw)?;
+        }
+        if queue != ScoreQueueOptions::default() {
+            builder = builder.score_queue(queue);
         }
         Ok(builder)
     }
@@ -198,6 +286,13 @@ impl ConfigBuilder {
         self
     }
 
+    /// Batching of [`LangfuseClient::score`](crate::LangfuseClient::score).
+    /// `max_batch_bytes` above 1,000,000 is capped to it.
+    pub fn score_queue(mut self, options: ScoreQueueOptions) -> Self {
+        self.score_queue = Some(options);
+        self
+    }
+
     /// Send requests through this [`reqwest::Client`] instead of one built by
     /// the SDK (useful for proxies, custom TLS or sharing a connection pool).
     ///
@@ -212,6 +307,24 @@ impl ConfigBuilder {
     pub fn build(self) -> Result<ClientConfig, LangfuseError> {
         if let Some(msg) = self.header_error {
             return Err(LangfuseError::Config(msg));
+        }
+
+        let mut score_queue = self.score_queue.unwrap_or_default();
+        if score_queue.flush_at == 0
+            || score_queue.max_queue_size == 0
+            || score_queue.max_batch_bytes == 0
+            || score_queue.flush_interval.is_zero()
+        {
+            return Err(LangfuseError::Config(
+                "Invalid score queue options: every value must be greater than 0".into(),
+            ));
+        }
+        if score_queue.max_batch_bytes > SCORES_BODY_LIMIT_BYTES {
+            tracing::warn!(
+                max_batch_bytes = score_queue.max_batch_bytes,
+                "score batches are capped at the 1,000,000-byte limit of the endpoint"
+            );
+            score_queue.max_batch_bytes = SCORES_BODY_LIMIT_BYTES;
         }
 
         let raw_url = self.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL);
@@ -247,8 +360,22 @@ impl ConfigBuilder {
             retry_policy: self.retry_policy.unwrap_or_default(),
             http_client: self.http_client,
             prompt_cache_ttl: self.prompt_cache_ttl.unwrap_or(DEFAULT_PROMPT_CACHE_TTL),
+            score_queue,
         })
     }
+}
+
+/// Parse a positive integer from environment variable `name`.
+fn parse_count(name: &str, raw: &str) -> Result<usize, LangfuseError> {
+    raw.trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|n| *n > 0)
+        .ok_or_else(|| {
+            LangfuseError::Config(format!(
+                "Invalid {name} '{raw}': expected a positive integer"
+            ))
+        })
 }
 
 /// Parse a duration in seconds (integer or decimal) from environment variable `name`.
@@ -384,6 +511,37 @@ mod tests {
                 msg.contains("LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS"),
                 "{msg}"
             );
+        }
+    }
+
+    #[test]
+    fn from_env_reads_score_queue_options() {
+        let config = from_vars(&KEYS).unwrap().build().unwrap();
+        assert_eq!(config.score_queue(), &super::ScoreQueueOptions::default());
+
+        let config = from_vars(&[
+            KEYS[0],
+            KEYS[1],
+            ("LANGFUSE_FLUSH_AT", "50"),
+            ("LANGFUSE_FLUSH_INTERVAL", "0.25"),
+            ("LANGFUSE_MAX_BATCH_SIZE_BYTES", "5000000"),
+        ])
+        .unwrap()
+        .build()
+        .unwrap();
+        assert_eq!(config.score_queue().flush_at, 50);
+        assert_eq!(
+            config.score_queue().flush_interval,
+            Duration::from_millis(250)
+        );
+        assert_eq!(config.score_queue().max_batch_bytes, 1_000_000, "capped");
+
+        for (name, raw) in [
+            ("LANGFUSE_FLUSH_AT", "0"),
+            ("LANGFUSE_MAX_BATCH_SIZE_BYTES", "x"),
+        ] {
+            let msg = config_error(from_vars(&[KEYS[0], KEYS[1], (name, raw)]));
+            assert!(msg.contains(name), "{msg}");
         }
     }
 

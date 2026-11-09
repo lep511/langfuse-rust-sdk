@@ -118,6 +118,10 @@ pub enum LangfuseError {
     /// A URL could not be parsed.
     #[error("URL parse error: {0}")]
     UrlParse(#[from] url::ParseError),
+
+    /// Invalid media content, or a failed upload or download of media bytes.
+    #[error("Media error: {0}")]
+    Media(String),
 }
 
 impl LangfuseError {
@@ -137,7 +141,8 @@ impl LangfuseError {
             LangfuseError::Transport(_)
             | LangfuseError::Serialization(_)
             | LangfuseError::Config(_)
-            | LangfuseError::UrlParse(_) => None,
+            | LangfuseError::UrlParse(_)
+            | LangfuseError::Media(_) => None,
         }
     }
 }

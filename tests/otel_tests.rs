@@ -4,7 +4,6 @@
 mod common;
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use common::*;
@@ -28,10 +27,7 @@ const OTEL_PATH: &str = "/api/public/otel/v1/traces";
 
 /// Options that only export on `flush`.
 fn manual_flush() -> TracingOptions {
-    TracingOptions {
-        flush_interval: Duration::from_secs(3600),
-        ..Default::default()
-    }
+    TracingOptions::default().with_flush_interval(Duration::from_secs(3600))
 }
 
 async fn setup(options: TracingOptions) -> (LangfuseTracer, MockServer) {
@@ -450,11 +446,11 @@ async fn dropping_the_last_handle_ends_the_observation() {
 
 #[tokio::test]
 async fn environment_and_release_are_recorded() {
-    let (tracer, server) = setup(TracingOptions {
-        environment: Some("staging".into()),
-        release: Some("2024.06.1".into()),
-        ..manual_flush()
-    })
+    let (tracer, server) = setup(
+        manual_flush()
+            .with_environment("staging")
+            .with_release("2024.06.1"),
+    )
     .await;
     tracer
         .start_observation("work", ObservationType::Span)
@@ -525,23 +521,19 @@ async fn in_scope_makes_the_observation_current() {
 async fn propagated_attributes_reach_the_current_and_new_spans() {
     let (tracer, server) = setup(manual_flush()).await;
     let root = tracer.start_observation("root", ObservationType::Span);
-    let outer = PropagatedAttributes {
-        user_id: Some("user-42".into()),
-        session_id: Some("session-7".into()),
-        tags: vec!["beta".into()],
-        trace_name: Some("checkout".into()),
-        version: Some("v3".into()),
-        ..Default::default()
-    }
-    .with_metadata("tenant", "acme");
-    let inner = PropagatedAttributes {
-        tags: vec!["beta".into(), "eu".into()],
-        prompt: Some(PromptLink {
+    let outer = PropagatedAttributes::default()
+        .with_user_id("user-42")
+        .with_session_id("session-7")
+        .with_tag("beta")
+        .with_trace_name("checkout")
+        .with_version("v3")
+        .with_metadata("tenant", "acme");
+    let inner = PropagatedAttributes::default()
+        .with_tags(["beta", "eu"])
+        .with_prompt_link(PromptLink {
             name: "support".into(),
             version: 4,
-        }),
-        ..Default::default()
-    };
+        });
     root.in_scope(propagate_attributes(outer, async {
         tracer
             .start_observation("child", ObservationType::Span)
@@ -616,10 +608,7 @@ async fn propagated_attributes_reach_the_current_and_new_spans() {
 async fn scopes_nest_in_either_order() {
     let (tracer, server) = setup(manual_flush()).await;
     let root = tracer.start_observation("root", ObservationType::Span);
-    let attributes = PropagatedAttributes {
-        session_id: Some("s-1".into()),
-        ..Default::default()
-    };
+    let attributes = PropagatedAttributes::default().with_session_id("s-1");
     // `in_scope` inside `propagate_attributes`: the scope keeps the attributes.
     propagate_attributes(
         attributes,
@@ -643,10 +632,7 @@ async fn scopes_nest_in_either_order() {
 async fn start_child_inherits_the_attributes_of_the_current_scope() {
     let (tracer, server) = setup(manual_flush()).await;
     let root = tracer.start_observation("root", ObservationType::Span);
-    let attributes = PropagatedAttributes {
-        user_id: Some("user-1".into()),
-        ..Default::default()
-    };
+    let attributes = PropagatedAttributes::default().with_user_id("user-1");
     propagate_attributes(attributes, async {
         root.start_child("child", ObservationType::Span).end();
     })
@@ -662,17 +648,11 @@ async fn start_child_inherits_the_attributes_of_the_current_scope() {
 
 #[tokio::test]
 async fn propagation_as_baggage_and_environment_override() {
-    let (tracer, server) = setup(TracingOptions {
-        environment: Some("production".into()),
-        ..manual_flush()
-    })
-    .await;
-    let attributes = PropagatedAttributes {
-        user_id: Some("user-9".into()),
-        environment: Some("canary".into()),
-        as_baggage: true,
-        ..Default::default()
-    };
+    let (tracer, server) = setup(manual_flush().with_environment("production")).await;
+    let attributes = PropagatedAttributes::default()
+        .with_user_id("user-9")
+        .with_environment("canary")
+        .with_baggage(true);
     let baggage_user = propagate_attributes(attributes, async {
         tracer
             .start_observation("in-scope", ObservationType::Span)
@@ -773,11 +753,7 @@ async fn trace_context_continues_an_existing_trace() {
 
 #[tokio::test]
 async fn zero_sample_rate_records_nothing() {
-    let (tracer, server) = setup(TracingOptions {
-        sample_rate: 0.0,
-        ..manual_flush()
-    })
-    .await;
+    let (tracer, server) = setup(manual_flush().with_sample_rate(0.0)).await;
     let span = tracer.start_observation("sampled-out", ObservationType::Span);
     assert!(!span.is_recording());
     span.set_input("ignored");
@@ -788,11 +764,7 @@ async fn zero_sample_rate_records_nothing() {
 
 #[tokio::test]
 async fn disabled_tracing_is_a_no_op() {
-    let (tracer, server) = setup(TracingOptions {
-        enabled: false,
-        ..manual_flush()
-    })
-    .await;
+    let (tracer, server) = setup(manual_flush().with_enabled(false)).await;
     let span = tracer.start_observation("disabled", ObservationType::Span);
     assert!(!span.is_recording());
     span.end();
@@ -808,22 +780,15 @@ fn an_enabled_tracer_needs_a_tokio_runtime() {
         Err(LangfuseError::Config(msg)) => assert!(msg.contains("Tokio runtime"), "{msg}"),
         other => panic!("expected Config error, got {other:?}"),
     }
-    let disabled = TracingOptions {
-        enabled: false,
-        ..Default::default()
-    };
+    let disabled = TracingOptions::default().with_enabled(false);
     assert!(client.tracer(disabled).is_ok());
     for invalid in [
-        TracingOptions {
-            sample_rate: 1.5,
-            enabled: false,
-            ..Default::default()
-        },
-        TracingOptions {
-            flush_at: 0,
-            enabled: false,
-            ..Default::default()
-        },
+        TracingOptions::default()
+            .with_sample_rate(1.5)
+            .with_enabled(false),
+        TracingOptions::default()
+            .with_flush_at(0)
+            .with_enabled(false),
     ] {
         assert!(matches!(
             client.tracer(invalid),
@@ -834,7 +799,7 @@ fn an_enabled_tracer_needs_a_tokio_runtime() {
 
 #[tokio::test]
 async fn mask_redacts_input_output_and_metadata() {
-    let mask: langfuse_rust_sdk::otel::MaskFn = Arc::new(|value| match value {
+    let mask = |value: Value| match value {
         Value::String(s) if s.contains("secret") => Value::String("[REDACTED]".into()),
         Value::Object(map) => Value::Object(
             map.into_iter()
@@ -848,12 +813,8 @@ async fn mask_redacts_input_output_and_metadata() {
                 .collect(),
         ),
         other => other,
-    });
-    let (tracer, server) = setup(TracingOptions {
-        mask: Some(mask),
-        ..manual_flush()
-    })
-    .await;
+    };
+    let (tracer, server) = setup(manual_flush().with_mask(mask)).await;
     let span = tracer.start_observation("login", ObservationType::Span);
     span.set_input(&json!({"user": "ada", "password": "hunter2"}))
         .set_output("the secret is 42")
@@ -880,12 +841,7 @@ async fn mask_redacts_input_output_and_metadata() {
 
 #[tokio::test]
 async fn a_panicking_mask_masks_everything() {
-    let mask: langfuse_rust_sdk::otel::MaskFn = Arc::new(|_| panic!("bad mask"));
-    let (tracer, server) = setup(TracingOptions {
-        mask: Some(mask),
-        ..manual_flush()
-    })
-    .await;
+    let (tracer, server) = setup(manual_flush().with_mask(|_| panic!("bad mask"))).await;
     let span = tracer.start_observation("masked", ObservationType::Span);
     span.set_input("sensitive");
     span.end();
@@ -934,12 +890,8 @@ async fn foreign_spans_are_filtered_by_default() {
 
 #[tokio::test]
 async fn should_export_span_overrides_the_default_filter() {
-    let filter: langfuse_rust_sdk::otel::ExportFilter = Arc::new(|span| span.name != "noisy");
-    let (tracer, server) = setup(TracingOptions {
-        should_export_span: Some(filter),
-        ..manual_flush()
-    })
-    .await;
+    let (tracer, server) =
+        setup(manual_flush().with_should_export_span(|span| span.name != "noisy")).await;
     tracer
         .provider()
         .tracer("my-http-lib")
@@ -997,11 +949,7 @@ async fn the_first_exported_span_is_marked_as_application_root() {
 
 #[tokio::test]
 async fn flush_at_exports_without_an_explicit_flush() {
-    let (tracer, server) = setup(TracingOptions {
-        flush_at: 2,
-        ..manual_flush()
-    })
-    .await;
+    let (tracer, server) = setup(manual_flush().with_flush_at(2)).await;
     tracer.start_observation("one", ObservationType::Span).end();
     tracer.start_observation("two", ObservationType::Span).end();
     wait_for_requests(&server, 1).await;
@@ -1010,11 +958,8 @@ async fn flush_at_exports_without_an_explicit_flush() {
 
 #[tokio::test]
 async fn flush_interval_exports_periodically() {
-    let (tracer, server) = setup(TracingOptions {
-        flush_interval: Duration::from_millis(50),
-        ..Default::default()
-    })
-    .await;
+    let (tracer, server) =
+        setup(TracingOptions::default().with_flush_interval(Duration::from_millis(50))).await;
     tracer
         .start_observation("periodic", ObservationType::Span)
         .end();
@@ -1024,11 +969,7 @@ async fn flush_interval_exports_periodically() {
 
 #[tokio::test]
 async fn large_batches_are_split_by_size() {
-    let (tracer, server) = setup(TracingOptions {
-        max_batch_bytes: 1500,
-        ..manual_flush()
-    })
-    .await;
+    let (tracer, server) = setup(manual_flush().with_max_batch_bytes(1500)).await;
     for i in 0..3 {
         let span = tracer.start_observation(format!("span-{i}"), ObservationType::Span);
         span.set_input(&"x".repeat(1000));
@@ -1110,4 +1051,320 @@ async fn spans_with_many_updates_keep_one_value_per_key() {
                 acc
             });
     assert!(keys.values().all(|n| *n == 1), "{keys:?}");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Scores and media
+// ═══════════════════════════════════════════════════════════════════════
+
+use langfuse_rust_sdk::media::LangfuseMedia;
+use langfuse_rust_sdk::models::media::MediaContentType;
+use langfuse_rust_sdk::models::scores::{CreateScoreRequest, CreateScoreValue};
+
+const PNG_B64: &str = "iVBORw0KGgo=";
+
+async fn accept_scores_and_media(server: &MockServer, media_id: &str) {
+    Mock::given(method("POST"))
+        .and(path("/api/public/scores"))
+        .respond_with(json(202, json!({"message": "Accepted"})))
+        .mount(server)
+        .await;
+    // Already stored: the upload stops after requesting the URL.
+    Mock::given(method("POST"))
+        .and(path("/api/public/media"))
+        .respond_with(json(200, json!({"uploadUrl": null, "mediaId": media_id})))
+        .mount(server)
+        .await;
+}
+
+async fn sent_scores(server: &MockServer) -> Vec<Value> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.url.path() == "/api/public/scores")
+        .flat_map(|r| serde_json::from_slice::<Vec<Value>>(&r.body).unwrap())
+        .collect()
+}
+
+async fn media_requests(server: &MockServer) -> Vec<Value> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.url.path() == "/api/public/media")
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect()
+}
+
+fn score(name: &str) -> CreateScoreRequest {
+    CreateScoreRequest::new(name, CreateScoreValue::Numeric(1.0))
+}
+
+#[tokio::test]
+async fn observations_score_themselves_and_their_trace() {
+    let (tracer, server) = setup(manual_flush().with_environment("staging")).await;
+    accept_scores_and_media(&server, "unused").await;
+
+    let span = tracer.start_observation("answer", ObservationType::Generation);
+    span.score(score("correctness"));
+    span.score_trace(CreateScoreRequest {
+        observation_id: Some("ignored".into()),
+        environment: Some("explicit".into()),
+        ..score("user-feedback")
+    });
+    span.end();
+    tracer.flush().await;
+
+    let scores = sent_scores(&server).await;
+    assert_eq!(scores.len(), 2);
+    assert_eq!(scores[0]["name"], "correctness");
+    assert_eq!(scores[0]["traceId"], span.trace_id());
+    assert_eq!(scores[0]["observationId"], span.id());
+    assert_eq!(scores[0]["environment"], "staging");
+    assert_eq!(scores[1]["traceId"], span.trace_id());
+    assert!(scores[1].get("observationId").is_none());
+    assert_eq!(scores[1]["environment"], "explicit");
+}
+
+#[tokio::test]
+async fn score_current_span_and_trace() {
+    let (tracer, server) = setup(manual_flush()).await;
+    accept_scores_and_media(&server, "unused").await;
+
+    let span = tracer.start_observation("work", ObservationType::Span);
+    span.in_scope(async {
+        tracer.score_current_span(score("span-level"));
+        tracer.score_current_trace(score("trace-level"));
+    })
+    .await;
+    span.end();
+    tracer.score_current_span(score("no-current-span"));
+    tracer.flush().await;
+
+    let scores = sent_scores(&server).await;
+    let names: Vec<&str> = scores.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["span-level", "trace-level"]);
+    assert_eq!(scores[0]["observationId"], span.id());
+    assert!(scores[1].get("observationId").is_none());
+}
+
+#[tokio::test]
+async fn scores_of_unsampled_observations_are_dropped() {
+    let (tracer, server) = setup(manual_flush().with_sample_rate(0.0)).await;
+    accept_scores_and_media(&server, "unused").await;
+    let span = tracer.start_observation("sampled-out", ObservationType::Span);
+    span.score(score("dropped"));
+    span.end();
+    tracer.flush().await;
+    assert!(sent_scores(&server).await.is_empty());
+}
+
+#[tokio::test]
+async fn tracer_score_follows_the_sampling_of_its_trace() {
+    let (tracer, server) = setup(
+        manual_flush()
+            .with_sample_rate(0.5)
+            .with_environment("staging"),
+    )
+    .await;
+    accept_scores_and_media(&server, "unused").await;
+
+    // A span and a score of the same trace get the same decision.
+    let mut recorded = Vec::new();
+    for i in 1..=40u128 {
+        let trace_id = format!(
+            "{:032x}",
+            i.wrapping_mul(0x9e37_79b9_7f4a_7c15_f39c_c060_5ced_c835)
+        );
+        let span = tracer.start_observation_in_trace(
+            "probe",
+            ObservationType::Span,
+            &TraceContext::new(trace_id.clone()),
+        );
+        if span.is_recording() {
+            recorded.push(trace_id.clone());
+        }
+        span.end();
+        tracer.score(CreateScoreRequest {
+            trace_id: Some(trace_id),
+            ..score("probe")
+        });
+    }
+    assert!(
+        !recorded.is_empty() && recorded.len() < 40,
+        "both decisions occur ({} of 40 recorded)",
+        recorded.len()
+    );
+    tracer.flush().await;
+
+    let scores = sent_scores(&server).await;
+    let sent: Vec<&str> = scores
+        .iter()
+        .map(|s| s["traceId"].as_str().unwrap())
+        .collect();
+    assert_eq!(sent, recorded);
+    assert!(scores.iter().all(|s| s["environment"] == "staging"));
+}
+
+#[tokio::test]
+async fn tracer_score_keeps_scores_without_a_w3c_trace_id() {
+    let (tracer, server) = setup(manual_flush().with_sample_rate(0.0)).await;
+    accept_scores_and_media(&server, "unused").await;
+    tracer.score(CreateScoreRequest {
+        trace_id: Some("0af7651916cd43dd8448eb211c80319c".into()),
+        ..score("w3c")
+    });
+    tracer.score(CreateScoreRequest {
+        trace_id: Some("my-trace-42".into()),
+        ..score("custom-id")
+    });
+    tracer.score(CreateScoreRequest {
+        session_id: Some("session-7".into()),
+        environment: Some("eval".into()),
+        ..score("session")
+    });
+    tracer.flush().await;
+
+    let scores = sent_scores(&server).await;
+    let names: Vec<&str> = scores.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["custom-id", "session"]);
+    assert_eq!(
+        scores[1]["environment"], "eval",
+        "an explicit environment is kept"
+    );
+}
+
+#[tokio::test]
+async fn tracer_score_is_dropped_when_tracing_is_disabled() {
+    let (tracer, server) = setup(manual_flush().with_enabled(false)).await;
+    accept_scores_and_media(&server, "unused").await;
+    tracer.score(CreateScoreRequest {
+        session_id: Some("session-7".into()),
+        ..score("ignored")
+    });
+    tracer.flush().await;
+    assert!(sent_scores(&server).await.is_empty());
+}
+
+#[tokio::test]
+async fn base64_media_in_observation_data_is_uploaded_and_referenced() {
+    let data_uri = format!("data:image/png;base64,{PNG_B64}");
+    let media = LangfuseMedia::from_data_uri(&data_uri).unwrap();
+    let reference = media.reference_string();
+    let (tracer, server) = setup(manual_flush()).await;
+    accept_scores_and_media(&server, media.media_id()).await;
+
+    let span = tracer.start_observation("vision", ObservationType::Generation);
+    span.set_input(&json!({"image": data_uri, "prompt": "describe"}))
+        .set_output(&json!([{"type": "base64", "media_type": "image/png", "data": PNG_B64}]))
+        .set_metadata(&json!({"file": data_uri}));
+    span.end();
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    let exported_span = named(&spans, "vision");
+    assert_eq!(
+        exported_span.attr_json("langfuse.observation.input"),
+        Some(json!({"image": reference, "prompt": "describe"}))
+    );
+    assert_eq!(
+        exported_span
+            .attr_json("langfuse.observation.output")
+            .unwrap()[0]["data"],
+        json!(reference)
+    );
+    assert_eq!(
+        exported_span.attr_json("langfuse.observation.metadata.file"),
+        Some(json!(reference))
+    );
+
+    let uploads = media_requests(&server).await;
+    let mut fields: Vec<&str> = uploads
+        .iter()
+        .map(|u| u["field"].as_str().unwrap())
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(fields, ["input", "metadata", "output"]);
+    for upload in &uploads {
+        assert_eq!(upload["traceId"], span.trace_id());
+        assert_eq!(upload["observationId"], span.id());
+        assert_eq!(upload["contentType"], "image/png");
+        assert_eq!(upload["sha256Hash"], media.sha256_hash());
+    }
+}
+
+#[tokio::test]
+async fn langfuse_media_values_are_uploaded_from_observation_data() {
+    let media =
+        LangfuseMedia::from_bytes(b"%PDF-1.4 tiny".to_vec(), MediaContentType::ApplicationPdf);
+    let (tracer, server) = setup(manual_flush()).await;
+    accept_scores_and_media(&server, media.media_id()).await;
+
+    let span = tracer.start_observation("summarize", ObservationType::Span);
+    span.set_input(&json!({"document": media}));
+    span.end();
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    let input = named(&spans, "summarize")
+        .attr_json("langfuse.observation.input")
+        .unwrap();
+    let reference = input["document"].as_str().unwrap();
+    assert!(
+        reference.starts_with("@@@langfuseMedia:type=application/pdf|id="),
+        "{reference}"
+    );
+    assert!(reference.contains(media.media_id()));
+    assert_eq!(media_requests(&server).await.len(), 1);
+}
+
+#[tokio::test]
+async fn media_in_other_instrumentation_spans_is_uploaded() {
+    let media = LangfuseMedia::from_data_uri(&format!("data:image/png;base64,{PNG_B64}")).unwrap();
+    let (tracer, server) = setup(manual_flush()).await;
+    accept_scores_and_media(&server, media.media_id()).await;
+
+    let prompt = json!([{"role": "user", "parts": [{"inline_data": {"mime_type": "image/png", "data": PNG_B64}}]}]);
+    let llm = tracer
+        .provider()
+        .tracer("opentelemetry.instrumentation.google_generativeai");
+    llm.span_builder("generate")
+        .with_attributes([KeyValue::new("gen_ai.prompt", prompt.to_string())])
+        .start(&llm)
+        .end();
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    let rewritten = named(&spans, "generate")
+        .attr_json("gen_ai.prompt")
+        .unwrap();
+    assert_eq!(
+        rewritten[0]["parts"][0]["inline_data"]["data"],
+        json!(media.reference_string())
+    );
+    let uploads = media_requests(&server).await;
+    assert_eq!(uploads.len(), 1);
+    assert_eq!(uploads[0]["field"], "input");
+}
+
+#[tokio::test]
+async fn media_upload_can_be_disabled() {
+    let data_uri = format!("data:image/png;base64,{PNG_B64}");
+    let (tracer, server) = setup(manual_flush().with_media_upload(false)).await;
+    accept_scores_and_media(&server, "unused").await;
+
+    let span = tracer.start_observation("raw", ObservationType::Span);
+    span.set_input(&data_uri);
+    span.end();
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    assert_eq!(
+        named(&spans, "raw").attr_str("langfuse.observation.input"),
+        Some(data_uri)
+    );
+    assert!(media_requests(&server).await.is_empty());
 }
