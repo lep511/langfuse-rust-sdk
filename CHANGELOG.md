@@ -4,6 +4,70 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.7.0] - 2026-11-09
+
+Datasets with their items, experiments and batch evaluations.
+
+### Added
+
+- **Datasets**: `LangfuseClient::get_dataset(name, &GetDatasetOptions)` fetches
+  a dataset with every item (`GET /api/public/v2/datasets/{name}`, then every
+  page of `GET /api/public/dataset-items`) and returns a `DatasetWithItems`;
+  `GetDatasetOptions` sets the page size (50) and the `version` to read the
+  items at. Media stays as reference strings (each item's `media_references`
+  has download URLs; `client.media.resolve_references` turns them into data
+  URIs).
+- `LangfuseClient::create_dataset_item(&CreateDatasetItemRequest)` uploads the
+  media in `input`, `expected_output` and `metadata` (data URIs, which is how
+  `LangfuseMedia` serializes, and the base64 shapes of LLM APIs) before
+  creating the item, replacing it with reference strings. With media, a
+  missing item ID is generated and the dataset is fetched once for its ID; a
+  failed upload returns the error without creating the item.
+  `CreateDatasetItemRequest::new(dataset_name)`.
+- **`experiment` module**: `Evaluation` (`numeric`, `boolean`, `categorical`;
+  the data type follows the `EvaluationValue`), the `Evaluator`,
+  `CompositeEvaluator` and `RunEvaluator` traits with the `evaluator`,
+  `composite_evaluator` and `run_evaluator` constructors for named async
+  closures (returning an `Evaluation`, a `Vec`, an `Option` or a `Result` of
+  them), the `Task` trait (async closures returning
+  `Result<impl Serialize, impl Display>`; they may borrow), `ExperimentItem` /
+  `LocalExperimentItem`, `ExperimentOptions`, `ExperimentResult` (with
+  `format(include_item_results)`, `Display`, `{:#}` with the items, and
+  `average(name)`) and `RegressionError` to fail CI on a regression.
+- **Experiments** (`otel`): `LangfuseTracer::run_experiment(data, task,
+  options)` and `DatasetWithItems::run_experiment(&tracer, task, options)` run
+  the task on every item (`max_concurrency`, 50, at a time), each in an
+  `experiment-item-run` trace with `experiment-item-task` (the task's scope)
+  and `experiment-item-evaluation` (one `evaluator` span per evaluator)
+  children, all with the `sdk-experiment` environment and the
+  `langfuse.experiment.*` attributes Langfuse builds experiments from (no
+  dataset run is created through the API). Item evaluations are scored on the
+  task span, run evaluations on the experiment (`datasetRunId`), with the
+  tracer's environment and sampling; spans and scores are flushed before
+  returning. The experiment ID of dataset runs is derived from project,
+  dataset and run name like the server does (same run name, same
+  experiment); local items are identified by the hash of their input, as in
+  the Python SDK. Failed items and evaluators are recorded and skipped, not
+  fatal. Verified against Langfuse Cloud.
+- `otel::attributes`: the ten `EXPERIMENT_*` keys and
+  `SDK_EXPERIMENT_ENVIRONMENT`. `LangfuseTracer::is_enabled`.
+- **Batch evaluation** (`batch_evaluation` module):
+  `LangfuseClient::run_batched_evaluation(BatchEvaluationOptions)` reads
+  observations from `GET /api/public/v2/observations` by cursor (JSON
+  `filter`, `fields` plus `time`, `fetch_batch_size`, `max_items`, 3 retries
+  and a 60 s timeout per page), deduplicates each page, maps every
+  observation with a `Mapper` closure, runs the evaluators (`max_concurrency`,
+  5) and queues one score per evaluation on the observation, with its trace,
+  its environment and the run `metadata`. Returns a `BatchEvaluationResult`
+  (totals, per-evaluator statistics, failed items, evaluations, `Display`);
+  a run stopped by `max_items` or a failed page request carries a
+  serializable `BatchEvaluationResumeToken` for `resume_from`.
+- Examples `run_experiment` (`--features otel`; local data, checks the
+  experiment is listed, then deletes its traces and scores) and
+  `batch_evaluation` (evaluates a trace it ingests, then deletes it).
+  `manage_datasets` upserts items with stable IDs through
+  `create_dataset_item` and reads them back with `get_dataset`.
+
 ## [0.6.0] - 2026-11-09
 
 Scores sent in the background, and media attachments.

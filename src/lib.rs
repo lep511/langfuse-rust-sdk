@@ -69,6 +69,16 @@
 //! agents, tools, ...) as OpenTelemetry spans and exports them in the
 //! background; see the `otel` module.
 //!
+//! # Datasets, experiments and evaluations
+//!
+//! [`LangfuseClient::get_dataset`] fetches a dataset with all its items and
+//! [`LangfuseClient::create_dataset_item`] uploads the media of a new item.
+//! With the `otel` feature, `LangfuseTracer::run_experiment` runs a task on
+//! dataset items or local data, traces and evaluates every run with the
+//! evaluators of [`experiment`], and returns an [`experiment::ExperimentResult`].
+//! [`LangfuseClient::run_batched_evaluation`] scores observations already
+//! stored in Langfuse with the same evaluators (see [`batch_evaluation`]).
+//!
 //! # Error handling
 //!
 //! Every method returns `Result<T, `[`LangfuseError`]`>`.  HTTP status codes
@@ -105,6 +115,11 @@ pub mod media;
 pub mod models;
 // Documented by its own `//!` docs, so intra-doc links resolve inside the module.
 mod background;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+pub mod batch_evaluation;
+mod dataset;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+pub mod experiment;
 #[cfg(feature = "otel")]
 pub mod otel;
 /// Pagination helpers for list endpoints.
@@ -427,15 +442,25 @@ impl LangfuseClient {
     /// The project ID is fetched with [`auth_check`](Self::auth_check) on the
     /// first call and cached (shared by clones of this client).
     pub async fn trace_url(&self, trace_id: &str) -> Result<String, LangfuseError> {
-        let project_id = match self.project_id.get() {
-            Some(id) => id.clone(),
-            None => self.auth_check().await?.id,
-        };
-        let base = self.http.base_url().as_str().trim_end_matches('/');
+        let project_id = self.resolve_project_id().await?;
         Ok(format!(
-            "{base}/project/{}/traces/{}",
+            "{}/project/{}/traces/{}",
+            self.ui_base_url(),
             encode_path_segment(&project_id),
             encode_path_segment(trace_id)
         ))
+    }
+
+    /// The project ID of the API keys, cached after the first [`auth_check`](Self::auth_check).
+    pub(crate) async fn resolve_project_id(&self) -> Result<String, LangfuseError> {
+        match self.project_id.get() {
+            Some(id) => Ok(id.clone()),
+            None => Ok(self.auth_check().await?.id),
+        }
+    }
+
+    /// The base URL without its trailing `/`, for links to the Langfuse UI.
+    pub(crate) fn ui_base_url(&self) -> &str {
+        self.http.base_url().as_str().trim_end_matches('/')
     }
 }

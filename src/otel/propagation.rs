@@ -187,6 +187,45 @@ pub async fn propagate_attributes<F: Future>(
     future.with_context(cx).await
 }
 
+/// Experiment attributes of the spans of one experiment item, set by the SDK
+/// (already serialized, so not validated) and never written to baggage.
+#[derive(Debug, Clone)]
+pub(crate) struct ExperimentAttributes {
+    pub(crate) id: String,
+    /// The run name.
+    pub(crate) name: String,
+    /// JSON object.
+    pub(crate) metadata: Option<String>,
+    pub(crate) dataset_id: Option<String>,
+    pub(crate) item_id: String,
+    /// JSON object.
+    pub(crate) item_metadata: Option<String>,
+    /// ID of the span running the task.
+    pub(crate) item_root_observation_id: String,
+}
+
+impl ExperimentAttributes {
+    fn span_attributes(&self, out: &mut Vec<KeyValue>) {
+        let values = [
+            (attr::EXPERIMENT_ID, Some(&self.id)),
+            (attr::EXPERIMENT_NAME, Some(&self.name)),
+            (attr::EXPERIMENT_METADATA, self.metadata.as_ref()),
+            (attr::EXPERIMENT_DATASET_ID, self.dataset_id.as_ref()),
+            (attr::EXPERIMENT_ITEM_ID, Some(&self.item_id)),
+            (attr::EXPERIMENT_ITEM_METADATA, self.item_metadata.as_ref()),
+            (
+                attr::EXPERIMENT_ITEM_ROOT_OBSERVATION_ID,
+                Some(&self.item_root_observation_id),
+            ),
+        ];
+        for (key, value) in values {
+            if let Some(value) = value {
+                out.push(KeyValue::new(key, value.clone()));
+            }
+        }
+    }
+}
+
 /// Validated, merged propagated attributes stored in the OpenTelemetry context.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PropagatedState {
@@ -199,23 +238,33 @@ pub(crate) struct PropagatedState {
     /// Serialized (JSON) values.
     metadata: BTreeMap<String, String>,
     prompt: Option<PromptLink>,
+    /// Set by `run_experiment`; forces the `sdk-experiment` environment.
+    experiment: Option<ExperimentAttributes>,
 }
 
 impl PropagatedState {
     /// Span attributes for this state.
     pub(crate) fn span_attributes(&self) -> Vec<KeyValue> {
         let mut out = Vec::new();
+        // Spans of an experiment item always belong to the experiment environment.
+        let environment = match &self.experiment {
+            Some(_) => Some(attr::SDK_EXPERIMENT_ENVIRONMENT.to_owned()),
+            None => self.environment.clone(),
+        };
         let strings = [
             (attr::TRACE_USER_ID, &self.user_id),
             (attr::TRACE_SESSION_ID, &self.session_id),
             (attr::VERSION, &self.version),
             (attr::TRACE_NAME, &self.trace_name),
-            (attr::ENVIRONMENT, &self.environment),
+            (attr::ENVIRONMENT, &environment),
         ];
         for (key, value) in strings {
             if let Some(value) = value {
                 out.push(KeyValue::new(key, value.clone()));
             }
+        }
+        if let Some(experiment) = &self.experiment {
+            experiment.span_attributes(&mut out);
         }
         if !self.tags.is_empty() {
             let tags: Vec<StringValue> = self.tags.iter().cloned().map(StringValue::from).collect();
@@ -329,7 +378,18 @@ fn context_with(attributes: PropagatedAttributes, cx: &Context) -> Context {
     let as_baggage = attributes.as_baggage;
     let mut state = cx.get::<PropagatedState>().cloned().unwrap_or_default();
     state.merge(attributes);
+    apply(state, cx, as_baggage)
+}
 
+/// `cx` extended with the attributes of one experiment item, which are also
+/// applied to its current span (the span running the task).
+pub(crate) fn experiment_context(experiment: ExperimentAttributes, cx: &Context) -> Context {
+    let mut state = cx.get::<PropagatedState>().cloned().unwrap_or_default();
+    state.experiment = Some(experiment);
+    apply(state, cx, false)
+}
+
+fn apply(state: PropagatedState, cx: &Context, as_baggage: bool) -> Context {
     // The current observation (or foreign span) gets the attributes now; spans
     // started later get them from the processor.
     let current = cx.get::<CurrentObservation>().map(|c| c.0.clone());

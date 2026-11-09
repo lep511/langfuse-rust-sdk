@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
+
 use crate::error::LangfuseError;
 use crate::http::{HttpClient, encode_path_segment};
 use crate::models::datasets::{CreateDatasetRequest, Dataset};
@@ -10,6 +12,41 @@ use crate::pagination::{PageParams, Pages, Paginated, paginate_pages};
 #[derive(Clone)]
 pub struct DatasetsClient {
     pub(crate) http: Arc<HttpClient>,
+}
+
+/// Options of [`LangfuseClient::get_dataset`](crate::LangfuseClient::get_dataset).
+///
+/// Build it from [`GetDatasetOptions::default`] with the `with_*` methods.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct GetDatasetOptions {
+    /// Items fetched per request (default: 50).
+    pub fetch_items_page_size: i64,
+    /// Read the items as they were at this time (default: the latest version).
+    pub version: Option<DateTime<Utc>>,
+}
+
+impl Default for GetDatasetOptions {
+    fn default() -> Self {
+        Self {
+            fetch_items_page_size: 50,
+            version: None,
+        }
+    }
+}
+
+impl GetDatasetOptions {
+    /// Set [`fetch_items_page_size`](Self::fetch_items_page_size).
+    pub fn with_fetch_items_page_size(mut self, fetch_items_page_size: i64) -> Self {
+        self.fetch_items_page_size = fetch_items_page_size;
+        self
+    }
+
+    /// Set [`version`](Self::version).
+    pub fn with_version(mut self, version: DateTime<Utc>) -> Self {
+        self.version = Some(version);
+        self
+    }
 }
 
 impl DatasetsClient {

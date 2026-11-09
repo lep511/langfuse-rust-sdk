@@ -83,12 +83,20 @@
 //! tracing::subscriber::set_global_default(tracing_subscriber::registry().with(otel_layer))?;
 //! ```
 //!
+//! # Experiments
+//!
+//! [`LangfuseTracer::run_experiment`] (and `DatasetWithItems::run_experiment`)
+//! runs a task on every item of an experiment inside its own trace, evaluates
+//! the outputs and records everything with the `langfuse.experiment.*`
+//! attributes Langfuse builds experiments from; see [`crate::experiment`].
+//!
 //! [`opentelemetry`] and [`opentelemetry_sdk`] are re-exported so the types
 //! of this module match the versions the SDK uses.
 //!
 //! [`Context`]: opentelemetry::Context
 
 pub mod attributes;
+mod experiment;
 mod exporter;
 mod observation;
 mod options;

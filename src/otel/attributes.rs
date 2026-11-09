@@ -54,6 +54,30 @@ pub const RELEASE: &str = "langfuse.release";
 /// Version of the code or component.
 pub const VERSION: &str = "langfuse.version";
 
+/// Experiment ID (set by [`LangfuseTracer::run_experiment`](super::LangfuseTracer::run_experiment)).
+pub const EXPERIMENT_ID: &str = "langfuse.experiment.id";
+/// Experiment run name.
+pub const EXPERIMENT_NAME: &str = "langfuse.experiment.name";
+/// Experiment description.
+pub const EXPERIMENT_DESCRIPTION: &str = "langfuse.experiment.description";
+/// Experiment metadata (JSON object).
+pub const EXPERIMENT_METADATA: &str = "langfuse.experiment.metadata";
+/// Dataset of the experiment items.
+pub const EXPERIMENT_DATASET_ID: &str = "langfuse.experiment.dataset.id";
+/// Experiment item ID: the dataset item ID, or a hash of the input of local items.
+pub const EXPERIMENT_ITEM_ID: &str = "langfuse.experiment.item.id";
+/// Version of the dataset the item was read at.
+pub const EXPERIMENT_ITEM_VERSION: &str = "langfuse.experiment.item.version";
+/// Expected output of the experiment item (JSON, or plain text for strings).
+pub const EXPERIMENT_ITEM_EXPECTED_OUTPUT: &str = "langfuse.experiment.item.expected_output";
+/// Metadata of the experiment item (JSON object).
+pub const EXPERIMENT_ITEM_METADATA: &str = "langfuse.experiment.item.metadata";
+/// ID of the observation running the task of the experiment item.
+pub const EXPERIMENT_ITEM_ROOT_OBSERVATION_ID: &str =
+    "langfuse.experiment.item.root_observation_id";
+/// Environment of every span of an experiment.
+pub const SDK_EXPERIMENT_ENVIRONMENT: &str = "sdk-experiment";
+
 /// Internal: the span starts a trace whose ID was given explicitly.
 pub const AS_ROOT: &str = "langfuse.internal.as_root";
 /// Internal: the first exported span of the application in its trace.

@@ -17,7 +17,8 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 - `auth_check()` and `trace_url(trace_id)` helpers; `LangfuseClient` is cheap to `Clone`
 - Tracing on OpenTelemetry (feature `otel`): observations, context and attribute propagation, sampling, masking and batched export
 - Scores queued and sent in the background in batches (`client.score`)
-- Media attachments: upload, reference strings, resolution back to data URIs, and automatic upload of base64 media in traces
+- Media attachments: upload, reference strings, resolution back to data URIs, and automatic upload of base64 media in traces and dataset items
+- Datasets with all their items (`client.get_dataset`), experiments on datasets or local data with item, composite and run evaluators (`tracer.run_experiment`, feature `otel`), and batch evaluation of stored observations (`client.run_batched_evaluation`)
 
 ## Supported Resources
 
@@ -58,7 +59,7 @@ The unstable APIs may change without notice upstream. Enable them with:
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.6", features = ["unstable"] }
+langfuse-rust-sdk = { version = "0.7", features = ["unstable"] }
 ```
 
 ## Quick Start
@@ -130,7 +131,7 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`create_score`](examples/create_score.rs) | Create numeric and categorical scores for a trace in one batch |
 | [`list_scores`](examples/list_scores.rs) | Paginate through all scores using cursor-based pagination |
 | [`score_configs`](examples/score_configs.rs) | Create numeric and categorical score configurations |
-| [`manage_datasets`](examples/manage_datasets.rs) | Create a dataset, add items, and list all datasets |
+| [`manage_datasets`](examples/manage_datasets.rs) | Create a dataset, upsert items, fetch it with all its items, and list all datasets |
 | [`prompts`](examples/prompts.rs) | Create text and chat prompts (with a placeholder), fetch by label, and list all |
 | [`manage_models`](examples/manage_models.rs) | Register custom models with pricing, list, and delete |
 | [`skills`](examples/skills.rs) | Create a skill version with files, fetch with content, list all |
@@ -141,6 +142,8 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`error_handling`](examples/error_handling.rs) | Handle config errors, 404s, auth failures, and graceful fallbacks |
 | [`metrics_query`](examples/metrics_query.rs) | Query cost and tokens per model and a daily trend with the Metrics API (read-only) |
 | [`experiments`](examples/experiments.rs) | List recent experiments with scores and inspect their items (read-only) |
+| [`run_experiment`](examples/run_experiment.rs) | Run an experiment on local data with evaluators, check it is listed, then delete it (`--features otel`, writes traces and scores) |
+| [`batch_evaluation`](examples/batch_evaluation.rs) | Score the generations of a trace with `run_batched_evaluation`, then delete it (writes a trace and scores) |
 | [`comments`](examples/comments.rs) | Comment on a trace, then list and fetch its comments (writes a comment) |
 | [`annotation_queues`](examples/annotation_queues.rs) | Queue a trace for human review, complete it, and remove the item (writes data) |
 | [`evaluators`](examples/evaluators.rs) | Create an LLM-as-a-judge evaluator and a disabled evaluation rule, then delete both |
@@ -238,7 +241,7 @@ are inserted as compact JSON.
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.6", features = ["otel"] }
+langfuse-rust-sdk = { version = "0.7", features = ["otel"] }
 ```
 
 A `LangfuseTracer` creates observations as OpenTelemetry spans and exports them in the
@@ -336,6 +339,66 @@ let resolved = client.media.resolve_references(&observation_input).await;
 With the `otel` feature you rarely upload by hand: put the media (or any base64 data URI) in the
 traced data, e.g. `span.set_input(&json!({"image": image}))`, and it is uploaded during export.
 
+## Datasets and experiments
+
+`client.get_dataset(name, &GetDatasetOptions::default())` returns the dataset with every item
+(`.with_version(time)` reads them as they were then). `client.create_dataset_item(&request)`
+uploads the media found in the item first.
+
+With the `otel` feature, `tracer.run_experiment(data, task, options)` runs a task on dataset items
+or local data, traces each item, runs the evaluators and returns the results; Langfuse builds the
+experiment from the traces. `dataset.run_experiment(&tracer, task, options)` does the same on a
+fetched dataset, and runs with the same run name share one experiment.
+
+```rust
+use langfuse_rust_sdk::experiment::{
+    Evaluation, EvaluatorInput, ExperimentItem, ExperimentOptions, LocalExperimentItem,
+    RegressionError, evaluator,
+};
+
+let data = vec![LocalExperimentItem::new("Capital of France?").with_expected_output("Paris")];
+let exact_match = evaluator("exact_match", |args: EvaluatorInput| async move {
+    Evaluation::boolean("exact_match", args.expected_output == Some(args.output))
+});
+let result = tracer
+    .run_experiment(
+        data,
+        |item: ExperimentItem| async move { ask_llm(item.input().unwrap()).await },
+        ExperimentOptions::new("capitals").with_evaluator(exact_match),
+    )
+    .await?;
+println!("{result}");   // summary; `{result:#}` adds every item
+if result.average("exact_match").unwrap_or(0.0) < 0.9 {
+    return Err(RegressionError::new(result).with_message("accuracy dropped").into());
+}
+```
+
+Item evaluations become scores on the item's task span, run evaluations
+(`with_run_evaluator`) scores on the experiment; `with_composite_evaluator` combines the
+evaluations of each item. Failing tasks and evaluators are recorded and skipped.
+
+### Batch evaluation
+
+`client.run_batched_evaluation(options)` scores observations already in Langfuse with the same
+evaluators: it pages through `GET /api/public/v2/observations` (with a JSON `filter`), maps each
+observation to `EvaluatorInput` and queues one score per evaluation. A run stopped by `max_items`
+or a failed request returns a `BatchEvaluationResumeToken` to continue it:
+
+```rust
+use langfuse_rust_sdk::batch_evaluation::BatchEvaluationOptions;
+
+let mapper = |o: ObservationV2| async move {
+    EvaluatorInput::new(o.input.unwrap_or_default(), o.output.unwrap_or_default())
+};
+let options = BatchEvaluationOptions::new(mapper)
+    .with_evaluator(not_empty)
+    .with_filter(r#"[{"type": "string", "column": "name", "operator": "=", "value": "chat"}]"#)
+    .with_max_items(500);
+let result = client.run_batched_evaluation(options).await?;
+println!("{result}");
+let next = result.resume_token;   // serializable; pass it to `with_resume_from`
+```
+
 ## Pagination
 
 Every list method returning `Paginated<T>` or `CursorPaginated<T>` has a `*_pages` companion
@@ -412,14 +475,17 @@ src/
   ids.rs            — Trace and observation ID generation (random or seeded)
   prompt_cache.rs   — In-memory cache behind prompts.get_cached (crate-private)
   otel/             — Tracing on OpenTelemetry (feature `otel`): tracer, observations,
-                      propagation, span processor, batched exporter
+                      propagation, span processor, batched exporter, run_experiment
   media.rs          — LangfuseMedia, references, upload, media detection in traced data
+  dataset.rs        — get_dataset and create_dataset_item (crate-private module)
+  experiment.rs     — Evaluation, evaluator and task traits, experiment options and results
+  batch_evaluation.rs — run_batched_evaluation, resume tokens and results
   background.rs     — Score queue and media upload tasks of LangfuseClient (crate-private)
   models/           — Typed request/response structs for all resources
   api/              — Resource clients (one per API group)
-examples/           — 21 runnable examples covering all major features
+examples/           — 25 runnable examples covering all major features
 tests/              — wiremock HTTP tests (api_*), serde tests, config tests
-                      (525 tests in total with --all-features, 445 without)
+                      (572 tests in total with --all-features, 480 without)
 ```
 
 ## Requirements

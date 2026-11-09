@@ -171,6 +171,16 @@ impl LangfuseTracer {
         })
     }
 
+    /// State shared with the observations of this tracer.
+    pub(crate) fn shared(&self) -> &Arc<TracerShared> {
+        &self.shared
+    }
+
+    /// Whether tracing is enabled (spans are exported and scores queued).
+    pub fn is_enabled(&self) -> bool {
+        self.commands.is_some()
+    }
+
     /// The OpenTelemetry tracer provider. Use it to get tracers for other
     /// instrumentation (their spans are exported when
     /// [`should_export_span`](TracingOptions::should_export_span) accepts them)

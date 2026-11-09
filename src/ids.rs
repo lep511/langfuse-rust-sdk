@@ -44,7 +44,7 @@ pub fn create_observation_id(seed: Option<&str>) -> String {
 }
 
 /// Lowercase hex of the first `bytes` bytes of `SHA-256(seed)`.
-fn seeded_hex(seed: &str, bytes: usize) -> String {
+pub(crate) fn seeded_hex(seed: &str, bytes: usize) -> String {
     Sha256::digest(seed.as_bytes())[..bytes]
         .iter()
         .map(|b| format!("{b:02x}"))

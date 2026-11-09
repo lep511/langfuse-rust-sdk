@@ -87,3 +87,20 @@ pub struct CreateDatasetItemRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<DatasetStatus>,
 }
+
+impl CreateDatasetItemRequest {
+    /// A request for an item of dataset `dataset_name`, with every optional
+    /// field unset.
+    pub fn new(dataset_name: impl Into<String>) -> Self {
+        Self {
+            dataset_name: dataset_name.into(),
+            input: None,
+            expected_output: None,
+            metadata: None,
+            source_trace_id: None,
+            source_observation_id: None,
+            id: None,
+            status: None,
+        }
+    }
+}

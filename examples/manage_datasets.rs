@@ -1,10 +1,13 @@
-//! Create a dataset and add items to it.
+//! Create a dataset, upsert three items (stable IDs, so reruns update them
+//! instead of adding more), and fetch the dataset with all its items. Writes a
+//! dataset named `rust-sdk-example`; the API cannot delete datasets.
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 //!   cargo run --example manage_datasets
 //! ```
 
+use langfuse_rust_sdk::api::datasets::GetDatasetOptions;
 use langfuse_rust_sdk::models::dataset_items::CreateDatasetItemRequest;
 use langfuse_rust_sdk::models::datasets::CreateDatasetRequest;
 use langfuse_rust_sdk::pagination::PageParams;
@@ -33,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Created dataset: {} ({})", dataset.name, dataset.id);
 
     // Add items to the dataset
-    let items = vec![
+    let items = [
         ("What is Rust?", "Rust is a systems programming language."),
         (
             "What is Langfuse?",
@@ -42,27 +45,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("What is tokio?", "Tokio is an async runtime for Rust."),
     ];
 
-    for (input, expected) in &items {
+    for (index, (input, expected)) in items.iter().enumerate() {
+        // `create_dataset_item` also uploads media found in the item (see the `media` module).
         let item = client
-            .dataset_items
-            .create(&CreateDatasetItemRequest {
-                dataset_name: dataset.name.clone(),
+            .create_dataset_item(&CreateDatasetItemRequest {
+                id: Some(format!("rust-sdk-example-{index}")),
                 input: Some(serde_json::json!({"question": input})),
                 expected_output: Some(serde_json::json!({"answer": expected})),
-                metadata: None,
-                source_trace_id: None,
-                source_observation_id: None,
-                id: None,
-                status: None,
+                ..CreateDatasetItemRequest::new(&dataset.name)
             })
             .await?;
-        println!("  Added item: {}", item.id);
+        println!("  Upserted item: {}", item.id);
     }
 
-    // Fetch the dataset back
-    let fetched = client.datasets.get(&dataset.name).await?;
-    println!("\nFetched dataset: {}", fetched.name);
+    // Fetch the dataset back with every item.
+    let fetched = client
+        .get_dataset(&dataset.name, &GetDatasetOptions::default())
+        .await?;
+    println!(
+        "\nFetched dataset: {} ({} items)",
+        fetched.name,
+        fetched.items.len()
+    );
     println!("  Description: {:?}", fetched.description);
+    for item in &fetched.items {
+        println!("  - {}: {:?}", item.id, item.input);
+    }
 
     // List all datasets
     let all = client

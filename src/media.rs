@@ -48,7 +48,6 @@ const REFERENCE_SUFFIX: &str = "@@@";
 /// How deep [`extract_media`] and reference resolution look into JSON.
 pub(crate) const MAX_DEPTH: usize = 10;
 /// Longest data URI header (`data:<mime>;base64`) recognized.
-#[cfg_attr(not(feature = "otel"), allow(dead_code))]
 const MAX_DATA_URI_HEADER: usize = 256;
 
 /// How the media was provided; part of the reference string.
@@ -498,12 +497,10 @@ pub(crate) fn find_references(text: &str) -> Vec<&str> {
     out
 }
 
-#[cfg_attr(not(feature = "otel"), allow(dead_code))]
 fn is_reference(text: &str) -> bool {
     text.starts_with(REFERENCE_PREFIX) && text.ends_with(REFERENCE_SUFFIX)
 }
 
-#[cfg_attr(not(feature = "otel"), allow(dead_code))]
 pub(crate) fn is_base64_data_uri(text: &str) -> bool {
     text.starts_with("data:")
         && text
@@ -521,12 +518,10 @@ pub(crate) fn is_base64_data_uri(text: &str) -> bool {
 /// - `{"inline_data" | "inlineData": {"mime_type" | "mimeType": .., "data": ..}}` (Gemini).
 ///
 /// Media of unsupported types or with invalid base64 is left as-is.
-#[cfg_attr(not(feature = "otel"), allow(dead_code))]
 pub(crate) fn extract_media(value: Value, found: &mut Vec<LangfuseMedia>) -> Value {
     walk(value, 0, found)
 }
 
-#[cfg_attr(not(feature = "otel"), allow(dead_code))]
 fn walk(value: Value, depth: usize, found: &mut Vec<LangfuseMedia>) -> Value {
     if depth > MAX_DEPTH {
         return value;
@@ -584,7 +579,6 @@ fn walk(value: Value, depth: usize, found: &mut Vec<LangfuseMedia>) -> Value {
 
 /// For an object with `<mime_key>` and base64 `data`, build the media and
 /// return its reference string.
-#[cfg_attr(not(feature = "otel"), allow(dead_code))]
 fn replace_base64_field(
     map: &mut serde_json::Map<String, Value>,
     mime_key: &str,
@@ -601,7 +595,6 @@ fn replace_base64_field(
     Some(reference)
 }
 
-#[cfg_attr(not(feature = "otel"), allow(dead_code))]
 fn media_from_data_uri(text: &str) -> Option<LangfuseMedia> {
     if !is_base64_data_uri(text) {
         return None;

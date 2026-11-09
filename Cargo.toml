@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-sdk"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "Rust SDK for the Langfuse LLM observability API"
 license = "MIT"
@@ -55,4 +55,8 @@ required-features = ["otel"]
 
 [[example]]
 name = "media"
+required-features = ["otel"]
+
+[[example]]
+name = "run_experiment"
 required-features = ["otel"]
