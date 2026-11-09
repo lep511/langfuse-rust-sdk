@@ -40,6 +40,16 @@ pub struct ListObservationsParams {
     pub to_start_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expand_metadata: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_io_as_json: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_root_observation: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
 }
 
 impl ObservationsClient {

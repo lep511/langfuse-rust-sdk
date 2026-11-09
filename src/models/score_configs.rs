@@ -47,3 +47,20 @@ pub struct CreateConfigCategory {
     pub value: f64,
     pub label: String,
 }
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateScoreConfigRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_archived: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Vec<CreateConfigCategory>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}

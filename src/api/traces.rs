@@ -10,9 +10,8 @@ pub struct TracesClient {
 
 impl TracesClient {
     pub async fn delete(&self, trace_id: &str) -> Result<DeleteTraceResponse, LangfuseError> {
-        // The single trace delete returns a message response
         self.http
-            .get(&format!("/api/public/traces/{trace_id}"))
+            .delete_with_response(&format!("/api/public/traces/{trace_id}"))
             .await
     }
 

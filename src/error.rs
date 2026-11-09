@@ -3,6 +3,7 @@ use std::time::Duration;
 use reqwest::StatusCode;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LangfuseError {
     #[error("Bad request (400): {message}")]
     BadRequest {
@@ -34,9 +35,27 @@ pub enum LangfuseError {
         body: Option<serde_json::Value>,
     },
 
+    #[error("Conflict (409): {message}")]
+    Conflict {
+        message: String,
+        body: Option<serde_json::Value>,
+    },
+
+    #[error("Precondition failed (412): {message}")]
+    PreconditionFailed {
+        message: String,
+        body: Option<serde_json::Value>,
+    },
+
     #[error("Rate limited (429): retry after {retry_after:?}")]
     RateLimited {
         retry_after: Option<Duration>,
+        body: Option<serde_json::Value>,
+    },
+
+    #[error("Service unavailable (503): {message}")]
+    ServiceUnavailable {
+        message: String,
         body: Option<serde_json::Value>,
     },
 
@@ -78,10 +97,13 @@ pub(crate) fn map_response_error(
         403 => LangfuseError::AccessDenied { message, body },
         404 => LangfuseError::NotFound { message, body },
         405 => LangfuseError::MethodNotAllowed { message, body },
+        409 => LangfuseError::Conflict { message, body },
+        412 => LangfuseError::PreconditionFailed { message, body },
         429 => {
             let retry_after = parse_retry_after(headers);
             LangfuseError::RateLimited { retry_after, body }
         }
+        503 => LangfuseError::ServiceUnavailable { message, body },
         status @ 500..=599 => LangfuseError::ServerError {
             status,
             message,

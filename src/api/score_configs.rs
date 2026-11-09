@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::error::LangfuseError;
 use crate::http::HttpClient;
-use crate::models::score_configs::{CreateScoreConfigRequest, ScoreConfig};
+use crate::models::score_configs::{CreateScoreConfigRequest, ScoreConfig, UpdateScoreConfigRequest};
 use crate::pagination::{PageParams, Paginated};
 
 pub struct ScoreConfigsClient {
@@ -29,6 +29,16 @@ impl ScoreConfigsClient {
     pub async fn get(&self, config_id: &str) -> Result<ScoreConfig, LangfuseError> {
         self.http
             .get(&format!("/api/public/score-configs/{config_id}"))
+            .await
+    }
+
+    pub async fn update(
+        &self,
+        config_id: &str,
+        req: &UpdateScoreConfigRequest,
+    ) -> Result<ScoreConfig, LangfuseError> {
+        self.http
+            .patch(&format!("/api/public/score-configs/{config_id}"), req)
             .await
     }
 }

@@ -97,6 +97,32 @@ impl HttpClient {
             .await
     }
 
+    pub async fn delete_with_response<T: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<T, LangfuseError> {
+        self.request(Method::DELETE, path, None::<&()>, None::<&()>)
+            .await
+    }
+
+    pub async fn patch_no_content<B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<(), LangfuseError> {
+        self.request_no_content(Method::PATCH, path, Some(body))
+            .await
+    }
+
+    pub async fn delete_no_content_with_query<Q: Serialize>(
+        &self,
+        path: &str,
+        query: &Q,
+    ) -> Result<(), LangfuseError> {
+        self.request_no_content_with_query(Method::DELETE, path, None::<&()>, Some(query))
+            .await
+    }
+
     fn build_url(&self, path: &str) -> Result<Url, LangfuseError> {
         self.base_url.join(path).map_err(LangfuseError::UrlParse)
     }
@@ -166,6 +192,21 @@ impl HttpClient {
         path: &str,
         body: Option<&B>,
     ) -> Result<(), LangfuseError> {
+        self.request_no_content_with_query(method, path, body, None::<&()>)
+            .await
+    }
+
+    async fn request_no_content_with_query<B, Q>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+        query: Option<&Q>,
+    ) -> Result<(), LangfuseError>
+    where
+        B: Serialize,
+        Q: Serialize,
+    {
         let url = self.build_url(path)?;
         let mut attempt = 0;
 
@@ -175,6 +216,9 @@ impl HttpClient {
             let mut builder = self.client.request(method.clone(), url.clone());
             builder = self.apply_common_headers(builder);
 
+            if let Some(q) = query {
+                builder = builder.query(q);
+            }
             if let Some(b) = body {
                 builder = builder.json(b);
             }

@@ -20,6 +20,10 @@ tracing = "0.1"
 url = "2"
 serde_yml = "0.0.12"
 
+[features]
+unstable = []
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 dotenvy = "0.15"
+wiremock = "0.6"

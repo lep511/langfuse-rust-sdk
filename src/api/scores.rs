@@ -36,6 +36,24 @@ pub struct ListScoresParams {
     pub from_timestamp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_timestamp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experiment_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_max: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<String>,
 }
 
 impl ScoresClient {
