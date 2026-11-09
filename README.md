@@ -221,6 +221,11 @@ let messages = client
     .into_chat();
 ```
 
+When placeholder messages carry more than `role` and `content` (tool calls, tool results),
+use `compile_with_json_placeholders`: it accepts any serializable messages, such as the request
+types of an LLM client crate, keeps every field and returns JSON messages to convert back with
+`serde_json::from_value`.
+
 Variables come from anything that serializes to a JSON object (`json!`, maps, structs).
 Unknown `{{variables}}` are left untouched, `null` becomes an empty string and non-string values
 are inserted as compact JSON.
@@ -277,7 +282,16 @@ All API methods return `Result<T, LangfuseError>`. The error type maps HTTP stat
 
 `LangfuseError` is `#[non_exhaustive]`, so `match` statements need a wildcard arm. `err.body()` returns the parsed JSON error body. The evaluators, evaluation-rules and unstable endpoints return a structured body that `PublicApiError::from_error(&err)` (or `UnstablePublicApiError::from_error`) parses.
 
-Requests that fail with 408, 429 or 5xx are retried with exponential backoff, honoring `Retry-After`. 409 is not retried, because it signals a real conflict. See [`error_handling`](examples/error_handling.rs) for patterns.
+Failed requests are retried with exponential backoff, honoring `Retry-After`, as long as repeating them cannot duplicate their effect:
+
+| Failure | GET, HEAD, PUT, DELETE | POST, PATCH |
+|---|---|---|
+| 408, 429, 503 (request not processed) | retried | retried |
+| Other 5xx | retried | not retried |
+| Connection failure (request never sent) | retried | retried |
+| Timeout or connection dropped mid-request | retried | not retried |
+
+OTLP trace ingestion is retried like an idempotent request, since spans carry their IDs. 409 is never retried, because it signals a real conflict. See [`error_handling`](examples/error_handling.rs) for patterns.
 
 ## Project Structure
 
@@ -295,7 +309,7 @@ src/
   api/              — Resource clients (one per API group)
 examples/           — 21 runnable examples covering all major features
 tests/              — wiremock HTTP tests (api_*), serde tests, config tests
-                      (424 tests in total with --all-features, 397 without)
+                      (439 tests in total with --all-features, 412 without)
 ```
 
 ## Requirements

@@ -12,9 +12,19 @@ const DEFAULT_JITTER_FRACTION: f64 = 0.2;
 
 /// Configures how failed requests are retried.
 ///
-/// Retryable HTTP statuses: 408 (Request Timeout), 429 (Too Many Requests),
-/// and 5xx. Status 409 (Conflict) is **not** retried because it signals a
-/// real conflict that a retry cannot fix.
+/// What is retried depends on whether repeating the request could duplicate
+/// its effect:
+///
+/// | Failure | GET, HEAD, PUT, DELETE (idempotent) | POST, PATCH |
+/// |---|---|---|
+/// | 408, 429, 503 (request not processed) | retried | retried |
+/// | Other 5xx | retried | not retried |
+/// | Connection failure (request never sent) | retried | retried |
+/// | Timeout or connection dropped mid-request | retried | not retried |
+///
+/// OTLP trace ingestion counts as idempotent (spans carry their IDs). Status
+/// 409 (Conflict) is never retried: it signals a real conflict that a retry
+/// cannot fix.
 ///
 /// The default policy retries up to 2 times with 1 s initial backoff, 60 s
 /// maximum backoff and 20 % jitter.
@@ -42,17 +52,31 @@ impl Default for RetryPolicy {
 }
 
 impl RetryPolicy {
-    /// Whether a failed request with `status` should be retried on attempt `attempt`.
+    /// Whether a failed idempotent request with `status` should be retried on
+    /// attempt `attempt`.
     ///
     /// Retryable statuses: 408, 429 and 5xx. 409 is not retried because it signals
     /// a real conflict (duplicate id, resource still referenced) that a retry cannot fix.
+    /// Non-idempotent requests (POST, PATCH) are retried only on 408, 429 and 503;
+    /// see the [type docs](Self).
     pub fn should_retry(&self, status: StatusCode, attempt: u32) -> bool {
         attempt < self.max_retries && Self::is_retryable(status)
     }
 
     /// Whether `status` is retryable at all: 408, 429 or 5xx.
     pub(crate) fn is_retryable(status: StatusCode) -> bool {
-        matches!(status.as_u16(), 408 | 429 | 500..=599)
+        Self::is_retryable_for(status, true)
+    }
+
+    /// Whether `status` is retryable for a request that is (or is not)
+    /// idempotent. 408, 429 and 503 mean the request was not processed, so
+    /// they are retried for every request; other 5xx only for idempotent ones.
+    pub(crate) fn is_retryable_for(status: StatusCode, idempotent: bool) -> bool {
+        match status.as_u16() {
+            408 | 429 | 503 => true,
+            500..=599 => idempotent,
+            _ => false,
+        }
     }
 
     /// Compute the delay before the next retry attempt.

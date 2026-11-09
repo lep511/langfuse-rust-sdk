@@ -88,16 +88,18 @@ pub struct GetPromptOptions {
     /// Retries of the fetch instead of the client's
     /// [`RetryPolicy::max_retries`](crate::RetryPolicy::max_retries).
     pub max_retries: Option<u32>,
-    /// Timeout of the fetch instead of the client timeout.
+    /// Timeout of each fetch attempt instead of the client timeout. Timeouts
+    /// are retried, so a failing call can take up to
+    /// `(max_retries + 1) × fetch_timeout` plus the backoff delays.
     pub fetch_timeout: Option<Duration>,
 }
 
 impl GetPromptOptions {
     fn request_options(&self) -> RequestOptions<'static> {
         RequestOptions {
-            headers: None,
             max_retries: self.max_retries,
             timeout: self.fetch_timeout,
+            ..RequestOptions::default()
         }
     }
 }

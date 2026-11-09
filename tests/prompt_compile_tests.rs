@@ -311,3 +311,176 @@ fn compiled_values_are_inserted_unescaped() {
         r#"Data: {"user":{"id":1,"tags":["a","b"]}}"#
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  BasePrompt::default
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn base_prompt_can_be_built_with_default() {
+    use langfuse_rust_sdk::models::prompts::BasePrompt;
+
+    let prompt = Prompt::Text {
+        base: BasePrompt {
+            name: "mock".into(),
+            version: 2,
+            ..Default::default()
+        },
+        prompt: "Hi {{name}}".into(),
+    };
+    assert_eq!(prompt.name(), "mock");
+    assert!(!prompt.is_fallback());
+    assert!(prompt.config().is_null());
+    assert_eq!(
+        prompt
+            .compile(&json!({"name": "Ada"}))
+            .unwrap()
+            .into_text()
+            .unwrap(),
+        "Hi Ada"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  compile_with_json_placeholders
+// ═══════════════════════════════════════════════════════════════════════
+
+/// System message, `message_history` placeholder, user message.
+fn agent_prompt() -> Prompt {
+    serde_json::from_value(json!({
+        "type": "chat", "name": "agent", "version": 1, "config": {},
+        "labels": [], "tags": [],
+        "prompt": [
+            {"role": "system", "content": "You are a helpful assistant.", "type": "chatmessage"},
+            {"type": "placeholder", "name": "message_history"},
+            {"role": "user", "content": "Help me with {{task}}"}
+        ]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn json_placeholders_keep_tool_calls() {
+    let history = json!([
+        {"role": "user", "content": "What's the weather like in {{city}}?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_123",
+                "type": "function",
+                "function": {"name": "get_weather", "arguments": "{\"location\": \"San Francisco\"}"}
+            }]
+        },
+        {"role": "tool", "content": "It's sunny, 72°F", "tool_call_id": "call_123", "name": "get_weather"}
+    ]);
+    let messages = agent_prompt()
+        .compile_with_json_placeholders(
+            &json!({"task": "weather inquiry", "city": "SF"}),
+            [("message_history", &history)],
+        )
+        .unwrap()
+        .into_chat()
+        .unwrap();
+
+    assert_eq!(messages.len(), 5);
+    assert_eq!(
+        messages[0],
+        json!({"role": "system", "content": "You are a helpful assistant."})
+    );
+    assert_eq!(messages[1]["content"], "What's the weather like in SF?");
+    assert_eq!(messages[2]["content"], "");
+    assert_eq!(messages[2]["tool_calls"][0]["id"], "call_123");
+    assert_eq!(
+        messages[2]["tool_calls"][0]["function"]["name"],
+        "get_weather"
+    );
+    assert_eq!(messages[3]["role"], "tool");
+    assert_eq!(messages[3]["tool_call_id"], "call_123");
+    assert_eq!(messages[3]["name"], "get_weather");
+    assert_eq!(
+        messages[4],
+        json!({"role": "user", "content": "Help me with weather inquiry"})
+    );
+}
+
+#[test]
+fn json_placeholders_accept_typed_messages() {
+    #[derive(Serialize)]
+    struct ToolMessage<'a> {
+        role: &'a str,
+        content: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_call_id: Option<&'a str>,
+    }
+    let history = [
+        ToolMessage {
+            role: "user",
+            content: "Hi",
+            tool_call_id: None,
+        },
+        ToolMessage {
+            role: "tool",
+            content: "42",
+            tool_call_id: Some("call_9"),
+        },
+    ];
+    let messages = agent_prompt()
+        .compile_with_json_placeholders(&(), [("message_history", &history)])
+        .unwrap()
+        .into_chat()
+        .unwrap();
+    assert_eq!(messages[1], json!({"role": "user", "content": "Hi"}));
+    assert_eq!(
+        messages[2],
+        json!({"role": "tool", "content": "42", "tool_call_id": "call_9"})
+    );
+}
+
+#[test]
+fn json_placeholders_keep_unresolved_and_non_text_content() {
+    let parts = json!([{
+        "role": "user",
+        "content": [{"type": "text", "text": "{{task}}"}, {"type": "image_url", "image_url": {"url": "x"}}]
+    }]);
+    let unresolved = agent_prompt()
+        .compile_with_json_placeholders(&json!({"task": "t"}), std::iter::empty::<(&str, Value)>())
+        .unwrap()
+        .into_chat()
+        .unwrap();
+    assert_eq!(
+        unresolved[1],
+        json!({"type": "placeholder", "name": "message_history"})
+    );
+
+    let filled = agent_prompt()
+        .compile_with_json_placeholders(&json!({"task": "t"}), [("message_history", &parts)])
+        .unwrap()
+        .into_chat()
+        .unwrap();
+    assert_eq!(filled[1], parts[0], "non-string content is left as-is");
+}
+
+#[test]
+fn json_placeholders_must_be_arrays_of_objects() {
+    for value in [
+        json!("not a list"),
+        json!(["invalid message"]),
+        json!({"role": "user"}),
+    ] {
+        match agent_prompt().compile_with_json_placeholders(&(), [("message_history", &value)]) {
+            Err(LangfuseError::Serialization(err)) => {
+                assert!(err.to_string().contains("message_history"), "{err}");
+            }
+            other => panic!("expected Serialization error for {value}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn json_placeholders_on_a_text_prompt_compile_the_text() {
+    let compiled = text_prompt("Hi {{name}}")
+        .compile_with_json_placeholders(&json!({"name": "Ada"}), [("unused", json!("ignored"))])
+        .unwrap();
+    assert_eq!(compiled.into_text().unwrap(), "Hi Ada");
+}

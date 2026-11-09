@@ -37,6 +37,9 @@ pub(crate) struct RequestOptions<'a> {
     pub max_retries: Option<u32>,
     /// Timeout for this request instead of the client timeout.
     pub timeout: Option<Duration>,
+    /// Whether the request can be repeated without duplicating its effect,
+    /// instead of deciding from the HTTP method.
+    pub idempotent: Option<bool>,
 }
 
 /// Thin wrapper around [`reqwest::Client`] that adds authentication,
@@ -151,6 +154,17 @@ impl HttpClient {
             RequestOptions::default(),
         )
         .await
+    }
+
+    /// POST with per-request options (headers, idempotency); the response body is ignored.
+    pub(crate) async fn post_no_response_with_options<B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+        options: RequestOptions<'_>,
+    ) -> Result<(), LangfuseError> {
+        self.request_no_content(Method::POST, path, Some(body), None::<&()>, options)
+            .await
     }
 
     /// POST with extra per-request headers; the response body is ignored.
@@ -363,6 +377,7 @@ impl HttpClient {
         let url = self.build_url(path)?;
         let timeout = options.timeout.or(self.request_timeout);
         let max_retries = options.max_retries.unwrap_or(self.retry_policy.max_retries);
+        let idempotent = options.idempotent.unwrap_or_else(|| is_idempotent(&method));
         let mut attempt = 0;
 
         loop {
@@ -386,16 +401,34 @@ impl HttpClient {
                 builder = builder.json(b);
             }
 
-            let response = builder.send().await.map_err(LangfuseError::Transport)?;
-            let status = response.status();
-            let response_headers = response.headers().clone();
-            let bytes = response.bytes().await.map_err(LangfuseError::Transport)?;
+            let received = match builder.send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    let response_headers = response.headers().clone();
+                    response
+                        .bytes()
+                        .await
+                        .map(|bytes| (status, response_headers, bytes))
+                }
+                Err(err) => Err(err),
+            };
+            let (status, response_headers, bytes) = match received {
+                Ok(received) => received,
+                Err(err) if attempt < max_retries && retry_transport_error(&err, idempotent) => {
+                    let delay = self.retry_policy.delay(attempt, None);
+                    debug!(attempt, delay_ms = delay.as_millis(), error = %err, "retrying");
+                    tokio::time::sleep(delay).await;
+                    attempt += 1;
+                    continue;
+                }
+                Err(err) => return Err(LangfuseError::Transport(err)),
+            };
 
             if status.is_success() {
                 return Ok(bytes.to_vec());
             }
 
-            if attempt >= max_retries || !RetryPolicy::is_retryable(status) {
+            if attempt >= max_retries || !RetryPolicy::is_retryable_for(status, idempotent) {
                 return Err(map_response_error(status, &bytes, &response_headers));
             }
 
@@ -406,6 +439,26 @@ impl HttpClient {
             attempt += 1;
         }
     }
+}
+
+/// Whether repeating a request with `method` cannot duplicate its effect.
+/// PATCH is excluded: the HTTP spec does not make it idempotent.
+fn is_idempotent(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::PUT | Method::DELETE | Method::OPTIONS
+    )
+}
+
+/// Whether a transport error is worth retrying. A failed connection means the
+/// request was never sent, so it is safe for every method; a timeout or a
+/// dropped connection may hit after the server processed the request, so only
+/// idempotent requests are repeated.
+fn retry_transport_error(err: &reqwest::Error, idempotent: bool) -> bool {
+    if err.is_builder() || err.is_redirect() {
+        return false;
+    }
+    err.is_connect() || idempotent
 }
 
 fn parse_retry_after_header(headers: &HeaderMap) -> Option<Duration> {

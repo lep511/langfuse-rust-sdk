@@ -26,11 +26,16 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::error::LangfuseError;
 
-#[derive(Debug, Clone, Deserialize)]
+/// Fields shared by text and chat prompts.
+///
+/// Implements `Default`, so tests and mocks can build one with
+/// `BasePrompt { name: "..".into(), ..Default::default() }` without breaking
+/// when fields are added.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BasePrompt {
     pub name: String,
@@ -208,19 +213,114 @@ impl Prompt {
             }
         }
     }
+
+    /// Like [`compile_with_placeholders`](Self::compile_with_placeholders),
+    /// but each placeholder value can be anything that serializes to an array
+    /// of JSON objects (for example the request message types of an LLM
+    /// client crate), and every field of those messages is kept: `tool_calls`,
+    /// `tool_call_id`, `name`, ...
+    ///
+    /// The output messages are JSON objects: prompt messages as
+    /// `{"role", "content"}`, placeholder messages as given with a string
+    /// `content` compiled (other `content` shapes are left as-is), and
+    /// unresolved placeholders as `{"type": "placeholder", "name"}`. Convert
+    /// them to your client's message type with `serde_json::from_value`.
+    ///
+    /// ```
+    /// # use langfuse_rust_sdk::models::prompts::Prompt;
+    /// # use serde_json::json;
+    /// # let prompt: Prompt = serde_json::from_value(json!({
+    /// #     "type": "chat", "name": "agent", "version": 1, "config": {},
+    /// #     "labels": [], "tags": [],
+    /// #     "prompt": [
+    /// #         {"role": "system", "content": "You are a {{tone}} assistant."},
+    /// #         {"type": "placeholder", "name": "history"}
+    /// #     ]
+    /// # })).unwrap();
+    /// let history = json!([
+    ///     {"role": "assistant", "content": "", "tool_calls": [
+    ///         {"id": "call_1", "type": "function",
+    ///          "function": {"name": "get_weather", "arguments": "{}"}}
+    ///     ]},
+    ///     {"role": "tool", "content": "Sunny", "tool_call_id": "call_1"}
+    /// ]);
+    /// let messages = prompt
+    ///     .compile_with_json_placeholders(&json!({"tone": "concise"}), [("history", &history)])?
+    ///     .into_chat()
+    ///     .unwrap();
+    /// assert_eq!(messages[1]["tool_calls"][0]["id"], "call_1");
+    /// assert_eq!(messages[2]["tool_call_id"], "call_1");
+    /// # Ok::<(), langfuse_rust_sdk::LangfuseError>(())
+    /// ```
+    ///
+    /// Returns [`LangfuseError::Serialization`] if `variables` is not an
+    /// object or a placeholder value is not an array of objects.
+    pub fn compile_with_json_placeholders<V, I, K, M>(
+        &self,
+        variables: &V,
+        placeholders: I,
+    ) -> Result<CompiledPrompt<Value>, LangfuseError>
+    where
+        V: Serialize + ?Sized,
+        I: IntoIterator<Item = (K, M)>,
+        K: AsRef<str>,
+        M: Serialize,
+    {
+        let variables = variables_object(variables)?;
+        let compile = |content: &str| compile_template(content, &variables);
+        let prompt = match self {
+            Prompt::Text { prompt, .. } => return Ok(CompiledPrompt::Text(compile(prompt))),
+            Prompt::Chat { prompt, .. } => prompt,
+        };
+
+        let mut filled: HashMap<String, Vec<Map<String, Value>>> = HashMap::new();
+        for (name, messages) in placeholders {
+            let name = name.as_ref();
+            filled.insert(name.to_owned(), placeholder_messages(name, &messages)?);
+        }
+
+        let mut compiled = Vec::with_capacity(prompt.len());
+        for message in prompt {
+            match message {
+                ChatPromptMessage::Message(m) => {
+                    compiled.push(json!({"role": m.role, "content": compile(&m.content)}));
+                }
+                ChatPromptMessage::Placeholder(p) => match filled.get(&p.name) {
+                    Some(messages) => compiled.extend(messages.iter().map(|message| {
+                        let mut message = message.clone();
+                        if let Some(Value::String(content)) = message.get_mut("content") {
+                            let text = compile(content);
+                            *content = text;
+                        }
+                        Value::Object(message)
+                    })),
+                    None => {
+                        tracing::debug!(placeholder = %p.name, "prompt placeholder left unresolved");
+                        compiled.push(json!({"type": "placeholder", "name": p.name}));
+                    }
+                },
+            }
+        }
+        Ok(CompiledPrompt::Chat(compiled))
+    }
 }
 
-/// The result of [`Prompt::compile`]: text, or chat messages (with any
-/// unresolved placeholders still in place).
+/// The result of compiling a prompt: text, or chat messages with any
+/// unresolved placeholders still in place.
+///
+/// The messages are [`ChatPromptMessage`]s for [`Prompt::compile`] and
+/// [`Prompt::compile_with_placeholders`], and JSON objects
+/// (`CompiledPrompt<serde_json::Value>`) for
+/// [`Prompt::compile_with_json_placeholders`].
 #[derive(Debug, Clone)]
-pub enum CompiledPrompt {
+pub enum CompiledPrompt<M = ChatPromptMessage> {
     /// A compiled text prompt.
     Text(String),
     /// Compiled chat messages.
-    Chat(Vec<ChatPromptMessage>),
+    Chat(Vec<M>),
 }
 
-impl CompiledPrompt {
+impl<M> CompiledPrompt<M> {
     /// The text of a compiled text prompt.
     pub fn as_text(&self) -> Option<&str> {
         match self {
@@ -230,7 +330,7 @@ impl CompiledPrompt {
     }
 
     /// The messages of a compiled chat prompt.
-    pub fn as_chat(&self) -> Option<&[ChatPromptMessage]> {
+    pub fn as_chat(&self) -> Option<&[M]> {
         match self {
             CompiledPrompt::Chat(messages) => Some(messages),
             CompiledPrompt::Text(_) => None,
@@ -246,7 +346,7 @@ impl CompiledPrompt {
     }
 
     /// The messages of a compiled chat prompt.
-    pub fn into_chat(self) -> Option<Vec<ChatPromptMessage>> {
+    pub fn into_chat(self) -> Option<Vec<M>> {
         match self {
             CompiledPrompt::Chat(messages) => Some(messages),
             CompiledPrompt::Text(_) => None,
@@ -371,6 +471,28 @@ fn compile_template(content: &str, variables: &Map<String, Value>) -> String {
     }
     out.push_str(&content[from..]);
     out
+}
+
+/// Serialize a placeholder value into its list of message objects.
+fn placeholder_messages<M: Serialize + ?Sized>(
+    name: &str,
+    messages: &M,
+) -> Result<Vec<Map<String, Value>>, LangfuseError> {
+    let invalid = || {
+        LangfuseError::Serialization(<serde_json::Error as serde::ser::Error>::custom(format!(
+            "placeholder '{name}' must serialize to an array of message objects"
+        )))
+    };
+    match serde_json::to_value(messages)? {
+        Value::Array(items) => items
+            .into_iter()
+            .map(|item| match item {
+                Value::Object(message) => Ok(message),
+                _ => Err(invalid()),
+            })
+            .collect(),
+        _ => Err(invalid()),
+    }
 }
 
 /// Serialize `variables` into the JSON object used for substitution.

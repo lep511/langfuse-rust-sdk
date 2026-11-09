@@ -4,7 +4,7 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError};
+use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError, RetryPolicy};
 use serde_json::{Value, json};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -228,6 +228,14 @@ async fn slow_health_server() -> MockServer {
     server
 }
 
+/// Timeouts of GET requests are retried; these tests check the timeout alone.
+fn no_retries() -> RetryPolicy {
+    RetryPolicy {
+        max_retries: 0,
+        ..Default::default()
+    }
+}
+
 fn is_timeout(err: &LangfuseError) -> bool {
     matches!(err, LangfuseError::Transport(e) if e.is_timeout())
 }
@@ -239,6 +247,7 @@ async fn explicit_timeout_applies_to_a_custom_http_client() {
         .base_url(server.uri())
         .http_client(reqwest::Client::new())
         .timeout(Duration::from_millis(50))
+        .retry_policy(no_retries())
         .build()
         .unwrap();
     let client = LangfuseClient::new(config).unwrap();
@@ -257,6 +266,7 @@ async fn custom_http_client_keeps_its_own_timeout() {
     let config = ClientConfig::builder(PUBLIC_KEY, SECRET_KEY)
         .base_url(server.uri())
         .http_client(http)
+        .retry_policy(no_retries())
         .build()
         .unwrap();
     let client = LangfuseClient::new(config).unwrap();

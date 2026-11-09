@@ -10,8 +10,8 @@ Rust SDK for the Langfuse LLM observability API. Async-only, built on `reqwest` 
 
 ```bash
 cargo build                                # Build the library
-cargo test                                 # All tests without unstable APIs (397)
-cargo test --all-features                  # Including unstable APIs (424)
+cargo test                                 # All tests without unstable APIs (412)
+cargo test --all-features                  # Including unstable APIs (439)
 cargo test --test api_scores_tests         # One wiremock test file
 cargo test --test serde_tests              # Serialization tests of the original models
 cargo test --lib                           # In-crate unit tests (retry, http, config from_env, ids, prompt templates, prompt_cache, yaml_tool)
@@ -33,12 +33,12 @@ Tests never touch the network. HTTP behaviour is tested with `wiremock` in `test
   - JSON response: `get`, `get_with_query`, `post`, `put`, `patch`, `delete_with_response` (no body), `delete_with_body_response` (JSON body).
   - Body ignored (204 and similar): `post_no_response`, `post_no_response_with_headers`, `patch_no_content`, `delete_no_content`, `delete_no_content_with_query`, `delete_with_body`.
   - `encode_path_segment` (crate-private): percent-encode every interpolated path parameter (`folder/name` → `folder%2Fname`). Always use it when building paths.
-- `src/retry.rs` — `RetryPolicy` with exponential backoff + jitter. Retryable statuses: 408, 429, 5xx (409 is not retried). Honors `Retry-After`.
+- `src/retry.rs` — `RetryPolicy` with exponential backoff + jitter. Honors `Retry-After`. Retries depend on idempotency (`HttpClient` decides from the method, GET/HEAD/PUT/DELETE/OPTIONS, unless `RequestOptions::idempotent` overrides it, as OTLP ingestion does): 408, 429, 503 and connection failures are retried for every request; other 5xx, timeouts and dropped connections only for idempotent ones (`RetryPolicy::is_retryable_for`, `http::retry_transport_error`). 409 is never retried. The public `should_retry(status, attempt)` keeps the idempotent, status-only rule.
 - `src/error.rs` — `LangfuseError` (`#[non_exhaustive]`) maps status codes to variants: 400, 401, 403, 404, 405, 409 `Conflict`, 412 `PreconditionFailed`, 429 `RateLimited`, 503 `ServiceUnavailable`, other 5xx `ServerError`. `body()` returns the parsed JSON error body.
 - `src/pagination.rs` — `Paginated<T>` (page-based, `PageMeta`) and `CursorPaginated<T>` (`CursorMeta`), plus `PageParams` / `CursorParams`. Lazy streams: `paginate_pages` / `paginate_cursor` return `Pages<'a, P>` (boxed, `Send`, `Unpin`); `Pages::items()` returns `Items`. Params implement `PageQuery` / `CursorQuery` through the crate-private `impl_page_query!` / `impl_cursor_query!` macros, invoked next to each params struct.
 - `src/ids.rs` — `create_trace_id(seed)` / `create_observation_id(seed)`: random W3C IDs, or `SHA-256(seed)` truncated to 16/8 bytes.
 - `src/prompt_cache.rs` (crate-private) — cache behind `PromptsClient::get_cached`: `Mutex<State>` with entries (`Arc<Prompt>` + expiry; expired entries stay readable), the keys being refreshed (claimed through a `RefreshGuard` dropped at the end of the background `tokio` task) and a generation counter bumped by `invalidate`/`clear`, so a fetch that started before an invalidation is not written back. Shared by `PromptsClient` and `PromptVersionClient`; `create`, `delete*` and `prompt_versions.update` invalidate the prompt name. Per-call `max_retries` / `fetch_timeout` go through the crate-private `RequestOptions` of `HttpClient` (`get_with_query_options`).
-- Prompt compilation lives in `src/models/prompts.rs`: `Prompt::variables`, `compile`, `compile_with_placeholders` (`CompiledPrompt`) and the private `{{variable}}` template engine with its unit tests.
+- Prompt compilation lives in `src/models/prompts.rs`: `Prompt::variables`, `compile`, `compile_with_placeholders` (`CompiledPrompt<ChatPromptMessage>`), `compile_with_json_placeholders` (`CompiledPrompt<serde_json::Value>`, keeps extra message fields such as `tool_calls`) and the private `{{variable}}` template engine with its unit tests.
 
 **API clients** (`src/api/`): One file per resource group. Each struct holds `Arc<HttpClient>`; query-param structs live next to the client. API paths use the `/api/public/` prefix.
 

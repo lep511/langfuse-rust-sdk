@@ -4,6 +4,32 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.4.1] - 2026-11-09
+
+### Added
+
+- `Prompt::compile_with_json_placeholders(&variables, placeholders)`: placeholder
+  values can be any type that serializes to an array of JSON objects (such as
+  the message types of LLM client crates), and every field is kept
+  (`tool_calls`, `tool_call_id`, `name`, ...). Returns
+  `CompiledPrompt<serde_json::Value>`.
+- `BasePrompt` implements `Default`, so mocks can use
+  `BasePrompt { name: .., ..Default::default() }` without breaking when fields
+  are added.
+
+### Changed
+
+- `CompiledPrompt` takes a defaulted message type parameter
+  (`CompiledPrompt<M = ChatPromptMessage>`); existing code is unaffected.
+- Retries now depend on whether a request can be repeated safely:
+  - connection failures (the request was never sent) are retried for every
+    method; timeouts and connections dropped mid-request only for GET, HEAD,
+    PUT and DELETE;
+  - POST and PATCH are retried only on 408, 429 and 503, no longer on other
+    5xx, which could duplicate their effect (e.g. a second prompt version);
+  - OTLP trace ingestion is retried like an idempotent request, since spans
+    carry their IDs.
+
 ## [0.4.0] - 2026-11-09
 
 Prompt management: client-side cache and compilation.
