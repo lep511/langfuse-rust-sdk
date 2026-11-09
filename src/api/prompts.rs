@@ -1,19 +1,105 @@
-//! Retrieve, create, update and delete prompts.
+//! Retrieve, create, update and delete prompts, with an optional client-side cache.
+//!
+//! [`PromptsClient::get_cached`] is the call to use on hot paths: it serves
+//! prompts from memory, refreshes expired ones in the background and can fall
+//! back to a built-in prompt when Langfuse is unreachable.
+//!
+//! ```rust,no_run
+//! use langfuse_rust_sdk::api::prompts::{GetPromptOptions, PromptFallback};
+//! # use langfuse_rust_sdk::LangfuseClient;
+//! # use serde_json::json;
+//! # async fn example(client: &LangfuseClient) -> Result<(), langfuse_rust_sdk::LangfuseError> {
+//! let options = GetPromptOptions {
+//!     fallback: Some(PromptFallback::Text("Summarize: {{text}}".into())),
+//!     ..Default::default()
+//! };
+//! let prompt = client.prompts.get_cached("summarizer", &options).await?;
+//! let text = prompt.compile(&json!({"text": "..."}))?.into_text();
+//! # Ok(())
+//! # }
+//! ```
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::LangfuseError;
-use crate::http::{HttpClient, encode_path_segment};
+use crate::http::{HttpClient, RequestOptions, encode_path_segment};
 use crate::models::enums::PromptType;
-use crate::models::prompts::{CreatePromptRequest, Prompt};
+use crate::models::prompts::{BasePrompt, ChatPromptMessage, CreatePromptRequest, Prompt};
 use crate::pagination::{Pages, Paginated, impl_page_query, paginate_pages};
+use crate::prompt_cache::{CacheKey, Lookup, PromptCache};
 
 #[derive(Clone)]
 pub struct PromptsClient {
     pub(crate) http: Arc<HttpClient>,
+    /// Shared with [`PromptVersionClient`](crate::api::prompt_version::PromptVersionClient),
+    /// whose updates invalidate it.
+    pub(crate) cache: Arc<PromptCache>,
+}
+
+/// Which version of a prompt [`PromptsClient::get_cached`] returns.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PromptSelector {
+    /// The version carrying this label.
+    Label(String),
+    /// This version number.
+    Version(i64),
+}
+
+impl PromptSelector {
+    /// The version carrying `label`.
+    pub fn label(label: impl Into<String>) -> Self {
+        Self::Label(label.into())
+    }
+}
+
+impl Default for PromptSelector {
+    /// The version labelled `production`.
+    fn default() -> Self {
+        Self::Label("production".into())
+    }
+}
+
+/// Prompt content returned by [`PromptsClient::get_cached`] when the prompt is
+/// neither cached nor fetchable. Uses the same `{{variable}}` syntax.
+#[derive(Debug, Clone)]
+pub enum PromptFallback {
+    /// A text prompt.
+    Text(String),
+    /// A chat prompt.
+    Chat(Vec<ChatPromptMessage>),
+}
+
+/// Options of [`PromptsClient::get_cached`]; every field has a default.
+#[derive(Debug, Clone, Default)]
+pub struct GetPromptOptions {
+    /// Label or version to fetch (default: label `production`).
+    pub selector: PromptSelector,
+    /// How long a fetched prompt is served without refreshing it (default:
+    /// [`ConfigBuilder::prompt_cache_ttl`](crate::ConfigBuilder::prompt_cache_ttl),
+    /// 60 s). `Duration::ZERO` bypasses the cache.
+    pub cache_ttl: Option<Duration>,
+    /// Returned (marked [`Prompt::is_fallback`]) when the prompt is not cached
+    /// and the fetch fails. Fallbacks are never cached.
+    pub fallback: Option<PromptFallback>,
+    /// Retries of the fetch instead of the client's
+    /// [`RetryPolicy::max_retries`](crate::RetryPolicy::max_retries).
+    pub max_retries: Option<u32>,
+    /// Timeout of the fetch instead of the client timeout.
+    pub fetch_timeout: Option<Duration>,
+}
+
+impl GetPromptOptions {
+    fn request_options(&self) -> RequestOptions<'static> {
+        RequestOptions {
+            headers: None,
+            max_retries: self.max_retries,
+            timeout: self.fetch_timeout,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -98,8 +184,12 @@ impl PromptsClient {
         )
     }
 
+    /// `POST /api/public/v2/prompts`: create a prompt or a new version of it.
+    /// Invalidates the cached versions of the prompt.
     pub async fn create(&self, req: &CreatePromptRequest) -> Result<Prompt, LangfuseError> {
-        self.http.post("/api/public/v2/prompts", req).await
+        let prompt: Prompt = self.http.post("/api/public/v2/prompts", req).await?;
+        self.cache.invalidate(prompt.name());
+        Ok(prompt)
     }
 
     pub async fn get(&self, name: &str) -> Result<Prompt, LangfuseError> {
@@ -115,8 +205,11 @@ impl PromptsClient {
     }
 
     /// `DELETE /api/public/v2/prompts/{promptName}`: delete every version (204).
+    /// Invalidates the cached versions of the prompt.
     pub async fn delete(&self, name: &str) -> Result<(), LangfuseError> {
-        self.http.delete_no_content(&prompt_path(name)).await
+        self.http.delete_no_content(&prompt_path(name)).await?;
+        self.cache.invalidate(name);
+        Ok(())
     }
 
     /// `DELETE /api/public/v2/prompts/{promptName}?label=..&version=..` (204).
@@ -127,7 +220,160 @@ impl PromptsClient {
     ) -> Result<(), LangfuseError> {
         self.http
             .delete_no_content_with_query(&prompt_path(name), params)
-            .await
+            .await?;
+        self.cache.invalidate(name);
+        Ok(())
+    }
+
+    /// Get a prompt through the client-side cache.
+    ///
+    /// - A fresh cached prompt is returned without a request.
+    /// - An expired one is returned immediately while a background task
+    ///   (one per prompt and selector) fetches the new version.
+    /// - Otherwise the prompt is fetched and cached; if that fails, the
+    ///   [`fallback`](GetPromptOptions::fallback) is returned when set, or the
+    ///   error otherwise.
+    ///
+    /// A `404` evicts the prompt from the cache. [`create`](Self::create),
+    /// [`delete`](Self::delete) and
+    /// [`PromptVersionClient::update`](crate::api::prompt_version::PromptVersionClient::update)
+    /// invalidate the cached versions of the prompt they change. The cache is
+    /// shared by clones of the client.
+    pub async fn get_cached(
+        &self,
+        name: &str,
+        options: &GetPromptOptions,
+    ) -> Result<Arc<Prompt>, LangfuseError> {
+        let key = CacheKey {
+            name: name.to_owned(),
+            selector: options.selector.clone(),
+        };
+        let ttl = options
+            .cache_ttl
+            .unwrap_or_else(|| self.cache.default_ttl());
+
+        if !ttl.is_zero() {
+            match self.cache.lookup(&key) {
+                Lookup::Fresh(prompt) => return Ok(prompt),
+                Lookup::Stale(prompt) => {
+                    self.spawn_refresh(key, ttl, options.request_options());
+                    return Ok(prompt);
+                }
+                Lookup::Miss => {}
+            }
+        }
+
+        match fetch_and_store(
+            &self.http,
+            &self.cache,
+            &key,
+            ttl,
+            options.request_options(),
+        )
+        .await
+        {
+            Ok(prompt) => Ok(prompt),
+            Err(err) => match &options.fallback {
+                Some(fallback) => {
+                    tracing::warn!(prompt = %key, error = %err, "returning fallback prompt");
+                    Ok(Arc::new(fallback_prompt(&key, fallback)))
+                }
+                None => Err(err),
+            },
+        }
+    }
+
+    /// Remove every prompt from the cache of [`get_cached`](Self::get_cached).
+    pub fn clear_cache(&self) {
+        self.cache.clear();
+    }
+
+    /// Refresh `key` in the background unless a refresh is already running.
+    fn spawn_refresh(&self, key: CacheKey, ttl: Duration, request: RequestOptions<'static>) {
+        // Outside a Tokio runtime there is nothing to spawn on: keep serving the stale prompt.
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let Some(guard) = self.cache.start_refresh(&key) else {
+            return;
+        };
+        let http = Arc::clone(&self.http);
+        let cache = Arc::clone(&self.cache);
+        runtime.spawn(async move {
+            let _guard = guard;
+            // Another caller may have refreshed it since the lookup.
+            if cache.is_fresh(&key) {
+                return;
+            }
+            if let Err(err) = fetch_and_store(&http, &cache, &key, ttl, request).await {
+                tracing::warn!(prompt = %key, error = %err, "background prompt refresh failed");
+            }
+        });
+    }
+}
+
+/// Fetch the prompt of `key` and cache it, unless the cache was invalidated
+/// meanwhile. A `404` evicts the key.
+async fn fetch_and_store(
+    http: &HttpClient,
+    cache: &PromptCache,
+    key: &CacheKey,
+    ttl: Duration,
+    request: RequestOptions<'_>,
+) -> Result<Arc<Prompt>, LangfuseError> {
+    let generation = cache.generation();
+    let params = match &key.selector {
+        PromptSelector::Label(label) => GetPromptParams {
+            label: Some(label.clone()),
+            ..GetPromptParams::default()
+        },
+        PromptSelector::Version(version) => GetPromptParams {
+            version: Some(*version),
+            ..GetPromptParams::default()
+        },
+    };
+    match http
+        .get_with_query_options::<Prompt, _>(&prompt_path(&key.name), &params, request)
+        .await
+    {
+        Ok(prompt) => {
+            let prompt = Arc::new(prompt);
+            cache.insert(key.clone(), Arc::clone(&prompt), ttl, generation);
+            Ok(prompt)
+        }
+        Err(err) => {
+            if matches!(err, LangfuseError::NotFound { .. }) {
+                cache.remove(key);
+            }
+            Err(err)
+        }
+    }
+}
+
+fn fallback_prompt(key: &CacheKey, fallback: &PromptFallback) -> Prompt {
+    let (version, labels) = match &key.selector {
+        PromptSelector::Label(label) => (0, vec![label.clone()]),
+        PromptSelector::Version(version) => (*version, Vec::new()),
+    };
+    let base = BasePrompt {
+        name: key.name.clone(),
+        version,
+        config: serde_json::Value::Object(serde_json::Map::new()),
+        labels,
+        tags: Vec::new(),
+        commit_message: None,
+        resolution_graph: None,
+        is_fallback: true,
+    };
+    match fallback {
+        PromptFallback::Text(text) => Prompt::Text {
+            base,
+            prompt: text.clone(),
+        },
+        PromptFallback::Chat(messages) => Prompt::Chat {
+            base,
+            prompt: messages.clone(),
+        },
     }
 }
 

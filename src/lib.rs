@@ -90,6 +90,7 @@ pub mod ids;
 pub mod models;
 /// Pagination helpers for list endpoints.
 pub mod pagination;
+mod prompt_cache;
 /// Retry policy with exponential backoff and jitter.
 pub mod retry;
 /// Standalone utilities (YAML processing).
@@ -211,6 +212,7 @@ pub struct LangfuseClient {
 impl LangfuseClient {
     /// Create a new client from the given configuration.
     pub fn new(config: ClientConfig) -> Result<Self, LangfuseError> {
+        let prompt_cache = Arc::new(prompt_cache::PromptCache::new(config.prompt_cache_ttl));
         let http = Arc::new(HttpClient::new(config)?);
         Ok(Self {
             health: HealthClient {
@@ -233,9 +235,11 @@ impl LangfuseClient {
             },
             prompts: PromptsClient {
                 http: Arc::clone(&http),
+                cache: Arc::clone(&prompt_cache),
             },
             prompt_versions: PromptVersionClient {
                 http: Arc::clone(&http),
+                cache: prompt_cache,
             },
             models: ModelsClient {
                 http: Arc::clone(&http),

@@ -47,9 +47,11 @@ impl RetryPolicy {
     /// Retryable statuses: 408, 429 and 5xx. 409 is not retried because it signals
     /// a real conflict (duplicate id, resource still referenced) that a retry cannot fix.
     pub fn should_retry(&self, status: StatusCode, attempt: u32) -> bool {
-        if attempt >= self.max_retries {
-            return false;
-        }
+        attempt < self.max_retries && Self::is_retryable(status)
+    }
+
+    /// Whether `status` is retryable at all: 408, 429 or 5xx.
+    pub(crate) fn is_retryable(status: StatusCode) -> bool {
         matches!(status.as_u16(), 408 | 429 | 500..=599)
     }
 

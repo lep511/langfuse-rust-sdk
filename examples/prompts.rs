@@ -1,13 +1,25 @@
-//! Create and fetch text and chat prompts.
+//! Create text and chat prompts, fetch them through the client-side cache and
+//! compile their variables and placeholders.
+//!
+//! Writes data: creates (a new version of) the prompts `rust-sdk-greeting` and
+//! `rust-sdk-assistant` and keeps them. Delete them in the UI or with
+//! `client.prompts.delete(name)`.
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 //!   cargo run --example prompts
 //! ```
 
-use langfuse_rust_sdk::api::prompts::{GetPromptParams, ListPromptsParams};
-use langfuse_rust_sdk::models::prompts::{ChatPromptMessage, CreatePromptRequest, Prompt};
+use std::sync::Arc;
+
+use langfuse_rust_sdk::api::prompts::{
+    GetPromptOptions, GetPromptParams, ListPromptsParams, PromptFallback, PromptSelector,
+};
+use langfuse_rust_sdk::models::prompts::{
+    ChatMessage, ChatPromptMessage, CreatePromptRequest, Prompt,
+};
 use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
+use serde_json::json;
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
@@ -68,6 +80,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     print_prompt(&fetched);
+
+    // Cached fetch: the second call is served from memory. The fallback is used
+    // only if the prompt can be neither fetched nor found in the cache.
+    let options = GetPromptOptions {
+        selector: PromptSelector::label("staging"),
+        fallback: Some(PromptFallback::Text("Hello {{name}}!".into())),
+        ..Default::default()
+    };
+    let greeting = client
+        .prompts
+        .get_cached("rust-sdk-greeting", &options)
+        .await?;
+    let again = client
+        .prompts
+        .get_cached("rust-sdk-greeting", &options)
+        .await?;
+    println!(
+        "\nCached 'rust-sdk-greeting' v{} (second call from memory: {}, fallback: {})",
+        greeting.version(),
+        Arc::ptr_eq(&greeting, &again),
+        greeting.is_fallback()
+    );
+    println!("  Variables: {:?}", greeting.variables());
+    let compiled = greeting.compile(&json!({"name": "Ada", "service": "Langfuse"}))?;
+    println!("  Compiled:  {}", compiled.as_text().unwrap_or_default());
+
+    // Chat prompt: fill the placeholder with the conversation so far.
+    let assistant = client
+        .prompts
+        .get_cached(
+            "rust-sdk-assistant",
+            &GetPromptOptions {
+                selector: PromptSelector::label("latest"),
+                ..Default::default()
+            },
+        )
+        .await?;
+    let history = vec![
+        ChatMessage {
+            role: "user".into(),
+            content: "How do I read a file in {{language}}?".into(),
+        },
+        ChatMessage {
+            role: "assistant".into(),
+            content: "Use std::fs::read_to_string.".into(),
+        },
+    ];
+    let compiled = assistant.compile_with_placeholders(
+        &json!({"language": "Rust", "user_question": "And asynchronously?"}),
+        [("chat_history", &history)],
+    )?;
+    println!("\nCompiled 'rust-sdk-assistant':");
+    for message in compiled.as_chat().unwrap_or_default() {
+        if let ChatPromptMessage::Message(m) = message {
+            println!("    {}: {}", m.role, m.content);
+        }
+    }
 
     // List all prompts
     let list = client

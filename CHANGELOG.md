@@ -4,6 +4,41 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.4.0] - 2026-11-09
+
+Prompt management: client-side cache and compilation.
+
+### Breaking changes
+
+- `BasePrompt` gained `is_fallback` (never sent by the API); struct literals
+  need it.
+- `prompts.create`, `prompts.delete`, `prompts.delete_with_params` and
+  `prompt_versions.update` now also invalidate the cached versions of the
+  prompt (see `get_cached` below).
+
+### Added
+
+- **Prompt compilation**: `Prompt::variables()`, `Prompt::compile(&variables)`
+  and `Prompt::compile_with_placeholders(&variables, placeholders)`, returning
+  `CompiledPrompt::{Text, Chat}`. `{{variable}}` placeholders (whitespace
+  ignored) take their values from anything that serializes to a JSON object;
+  unknown variables are left as-is, `null` becomes empty and non-strings are
+  inserted as compact JSON. Chat placeholders are replaced by lists of
+  `ChatMessage` (whose contents are compiled too); unresolved ones stay in
+  place. Accessors `Prompt::{base, name, version, config, is_fallback}`.
+- **Prompt cache**: `PromptsClient::get_cached(name, &GetPromptOptions)`
+  returns an `Arc<Prompt>` from an in-memory cache shared by client clones:
+  - TTL per call (`cache_ttl`) or default from `ConfigBuilder::prompt_cache_ttl`
+    / `LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS` (60 s; zero bypasses the cache);
+  - expired prompts are served immediately while one background task per
+    prompt and selector refreshes them; a `404` evicts the prompt;
+  - `PromptSelector::{Label, Version}` (default: label `production`);
+  - `PromptFallback::{Text, Chat}`, returned with `is_fallback() == true` when
+    the prompt is neither cached nor fetchable (never cached);
+  - per-call `max_retries` and `fetch_timeout`;
+  - fetches overtaken by an invalidation are not written back;
+  - `PromptsClient::clear_cache()`.
+
 ## [0.3.0] - 2026-11-09
 
 Configuration from the environment, pagination streams, ID helpers and client

@@ -28,6 +28,17 @@ pub(crate) fn encode_path_segment(segment: &str) -> String {
     utf8_percent_encode(segment, PATH_SEGMENT).to_string()
 }
 
+/// Per-request overrides of the client defaults.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RequestOptions<'a> {
+    /// Extra headers for this request.
+    pub headers: Option<&'a HeaderMap>,
+    /// Retries for this request instead of `RetryPolicy::max_retries`.
+    pub max_retries: Option<u32>,
+    /// Timeout for this request instead of the client timeout.
+    pub timeout: Option<Duration>,
+}
+
 /// Thin wrapper around [`reqwest::Client`] that adds authentication,
 /// default headers, and a retry loop to every request.
 pub struct HttpClient {
@@ -73,8 +84,14 @@ impl HttpClient {
 
     /// Send a GET request and deserialize the JSON response.
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, LangfuseError> {
-        self.request(Method::GET, path, None::<&()>, None::<&()>, None)
-            .await
+        self.request(
+            Method::GET,
+            path,
+            None::<&()>,
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// Send a GET request with query parameters and deserialize the JSON response.
@@ -83,7 +100,24 @@ impl HttpClient {
         path: &str,
         query: &Q,
     ) -> Result<T, LangfuseError> {
-        self.request(Method::GET, path, None::<&()>, Some(query), None)
+        self.request(
+            Method::GET,
+            path,
+            None::<&()>,
+            Some(query),
+            RequestOptions::default(),
+        )
+        .await
+    }
+
+    /// GET with query parameters and per-request retry/timeout overrides.
+    pub(crate) async fn get_with_query_options<T: DeserializeOwned, Q: Serialize>(
+        &self,
+        path: &str,
+        query: &Q,
+        options: RequestOptions<'_>,
+    ) -> Result<T, LangfuseError> {
+        self.request(Method::GET, path, None::<&()>, Some(query), options)
             .await
     }
 
@@ -93,8 +127,14 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> Result<T, LangfuseError> {
-        self.request(Method::POST, path, Some(body), None::<&()>, None)
-            .await
+        self.request(
+            Method::POST,
+            path,
+            Some(body),
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// Send a POST request with a JSON body; the response body is ignored.
@@ -103,8 +143,14 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> Result<(), LangfuseError> {
-        self.request_no_content(Method::POST, path, Some(body), None::<&()>, None)
-            .await
+        self.request_no_content(
+            Method::POST,
+            path,
+            Some(body),
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// POST with extra per-request headers; the response body is ignored.
@@ -114,8 +160,17 @@ impl HttpClient {
         body: &B,
         headers: &HeaderMap,
     ) -> Result<(), LangfuseError> {
-        self.request_no_content(Method::POST, path, Some(body), None::<&()>, Some(headers))
-            .await
+        self.request_no_content(
+            Method::POST,
+            path,
+            Some(body),
+            None::<&()>,
+            RequestOptions {
+                headers: Some(headers),
+                ..RequestOptions::default()
+            },
+        )
+        .await
     }
 
     /// Send a PUT request with a JSON body and deserialize the JSON response.
@@ -124,8 +179,14 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> Result<T, LangfuseError> {
-        self.request(Method::PUT, path, Some(body), None::<&()>, None)
-            .await
+        self.request(
+            Method::PUT,
+            path,
+            Some(body),
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// Send a PATCH request with a JSON body and deserialize the JSON response.
@@ -134,8 +195,14 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> Result<T, LangfuseError> {
-        self.request(Method::PATCH, path, Some(body), None::<&()>, None)
-            .await
+        self.request(
+            Method::PATCH,
+            path,
+            Some(body),
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// Send a PATCH request with a JSON body; the response body is ignored.
@@ -144,14 +211,26 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> Result<(), LangfuseError> {
-        self.request_no_content(Method::PATCH, path, Some(body), None::<&()>, None)
-            .await
+        self.request_no_content(
+            Method::PATCH,
+            path,
+            Some(body),
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// Send a DELETE request without a body; the response body is ignored.
     pub async fn delete_no_content(&self, path: &str) -> Result<(), LangfuseError> {
-        self.request_no_content(Method::DELETE, path, None::<&()>, None::<&()>, None)
-            .await
+        self.request_no_content(
+            Method::DELETE,
+            path,
+            None::<&()>,
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// Send a DELETE request with query parameters; the response body is ignored.
@@ -160,8 +239,14 @@ impl HttpClient {
         path: &str,
         query: &Q,
     ) -> Result<(), LangfuseError> {
-        self.request_no_content(Method::DELETE, path, None::<&()>, Some(query), None)
-            .await
+        self.request_no_content(
+            Method::DELETE,
+            path,
+            None::<&()>,
+            Some(query),
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// DELETE with a JSON body; the response body is ignored.
@@ -170,8 +255,14 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> Result<(), LangfuseError> {
-        self.request_no_content(Method::DELETE, path, Some(body), None::<&()>, None)
-            .await
+        self.request_no_content(
+            Method::DELETE,
+            path,
+            Some(body),
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// DELETE without a body that returns a JSON response.
@@ -179,8 +270,14 @@ impl HttpClient {
         &self,
         path: &str,
     ) -> Result<T, LangfuseError> {
-        self.request(Method::DELETE, path, None::<&()>, None::<&()>, None)
-            .await
+        self.request(
+            Method::DELETE,
+            path,
+            None::<&()>,
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     /// DELETE with a JSON body that returns a JSON response.
@@ -189,8 +286,14 @@ impl HttpClient {
         path: &str,
         body: &B,
     ) -> Result<T, LangfuseError> {
-        self.request(Method::DELETE, path, Some(body), None::<&()>, None)
-            .await
+        self.request(
+            Method::DELETE,
+            path,
+            Some(body),
+            None::<&()>,
+            RequestOptions::default(),
+        )
+        .await
     }
 
     fn build_url(&self, path: &str) -> Result<Url, LangfuseError> {
@@ -216,14 +319,14 @@ impl HttpClient {
         path: &str,
         body: Option<&B>,
         query: Option<&Q>,
-        headers: Option<&HeaderMap>,
+        options: RequestOptions<'_>,
     ) -> Result<T, LangfuseError>
     where
         T: DeserializeOwned,
         B: Serialize,
         Q: Serialize,
     {
-        let bytes = self.execute(method, path, body, query, headers).await?;
+        let bytes = self.execute(method, path, body, query, options).await?;
         serde_json::from_slice(&bytes).map_err(LangfuseError::Serialization)
     }
 
@@ -234,13 +337,13 @@ impl HttpClient {
         path: &str,
         body: Option<&B>,
         query: Option<&Q>,
-        headers: Option<&HeaderMap>,
+        options: RequestOptions<'_>,
     ) -> Result<(), LangfuseError>
     where
         B: Serialize,
         Q: Serialize,
     {
-        self.execute(method, path, body, query, headers).await?;
+        self.execute(method, path, body, query, options).await?;
         Ok(())
     }
 
@@ -251,13 +354,15 @@ impl HttpClient {
         path: &str,
         body: Option<&B>,
         query: Option<&Q>,
-        headers: Option<&HeaderMap>,
+        options: RequestOptions<'_>,
     ) -> Result<Vec<u8>, LangfuseError>
     where
         B: Serialize,
         Q: Serialize,
     {
         let url = self.build_url(path)?;
+        let timeout = options.timeout.or(self.request_timeout);
+        let max_retries = options.max_retries.unwrap_or(self.retry_policy.max_retries);
         let mut attempt = 0;
 
         loop {
@@ -265,11 +370,11 @@ impl HttpClient {
 
             let mut builder = self.client.request(method.clone(), url.clone());
             builder = self.apply_common_headers(builder);
-            if let Some(timeout) = self.request_timeout {
+            if let Some(timeout) = timeout {
                 builder = builder.timeout(timeout);
             }
 
-            if let Some(extra) = headers {
+            if let Some(extra) = options.headers {
                 for (name, value) in extra {
                     builder = builder.header(name, value);
                 }
@@ -290,7 +395,7 @@ impl HttpClient {
                 return Ok(bytes.to_vec());
             }
 
-            if !self.retry_policy.should_retry(status, attempt) {
+            if attempt >= max_retries || !RetryPolicy::is_retryable(status) {
                 return Err(map_response_error(status, &bytes, &response_headers));
             }
 

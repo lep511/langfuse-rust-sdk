@@ -10,17 +10,17 @@ Rust SDK for the Langfuse LLM observability API. Async-only, built on `reqwest` 
 
 ```bash
 cargo build                                # Build the library
-cargo test                                 # All tests without unstable APIs (337)
-cargo test --all-features                  # Including unstable APIs (364)
+cargo test                                 # All tests without unstable APIs (397)
+cargo test --all-features                  # Including unstable APIs (424)
 cargo test --test api_scores_tests         # One wiremock test file
 cargo test --test serde_tests              # Serialization tests of the original models
-cargo test --lib                           # In-crate unit tests (retry, http, config from_env, ids, yaml_tool)
+cargo test --lib                           # In-crate unit tests (retry, http, config from_env, ids, prompt templates, prompt_cache, yaml_tool)
 cargo clippy --all-targets --all-features -- -D warnings
 cargo run --example health_check           # Example against the real API (needs .env)
 cargo run --example dashboards --features unstable  # Examples of unstable APIs need the feature
 ```
 
-Tests never touch the network. HTTP behaviour is tested with `wiremock` in `tests/api_*_tests.rs`; shared helpers live in `tests/common/mod.rs` (`test_client()`, `test_client_with_retries(n)`, `json(status, body)`, `single_request`, `query_pairs`, `query_value`). Client helpers (`Clone`, `auth_check`, `trace_url`, custom `reqwest::Client`) are tested in `tests/client_tests.rs` and the `*_pages` streams in `tests/pagination_tests.rs` (which consumes them with the `futures` dev-dependency). Test files for unstable APIs start with `#![cfg(feature = "unstable")]`. Examples in `examples/` hit the real Langfuse API; each doc comment says whether it writes data and how it cleans up. Examples using unstable APIs are declared in `Cargo.toml` with `required-features = ["unstable"]`. Examples build their client with `ClientConfig::from_env()` and need `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` via `.env` or environment.
+Tests never touch the network. HTTP behaviour is tested with `wiremock` in `tests/api_*_tests.rs`; shared helpers live in `tests/common/mod.rs` (`test_client()`, `test_client_with_retries(n)`, `json(status, body)`, `single_request`, `query_pairs`, `query_value`). Client helpers (`Clone`, `auth_check`, `trace_url`, custom `reqwest::Client`) are tested in `tests/client_tests.rs` the `*_pages` streams in `tests/pagination_tests.rs` (which consumes them with the `futures` dev-dependency), prompt compilation in `tests/prompt_compile_tests.rs` and `get_cached` in `tests/prompt_cache_tests.rs` (timing-based: short TTLs and delayed mocks, polled with bounded waits). Test files for unstable APIs start with `#![cfg(feature = "unstable")]`. Examples in `examples/` hit the real Langfuse API; each doc comment says whether it writes data and how it cleans up. Examples using unstable APIs are declared in `Cargo.toml` with `required-features = ["unstable"]`. Examples build their client with `ClientConfig::from_env()` and need `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` via `.env` or environment.
 
 ## Architecture
 
@@ -37,6 +37,8 @@ Tests never touch the network. HTTP behaviour is tested with `wiremock` in `test
 - `src/error.rs` — `LangfuseError` (`#[non_exhaustive]`) maps status codes to variants: 400, 401, 403, 404, 405, 409 `Conflict`, 412 `PreconditionFailed`, 429 `RateLimited`, 503 `ServiceUnavailable`, other 5xx `ServerError`. `body()` returns the parsed JSON error body.
 - `src/pagination.rs` — `Paginated<T>` (page-based, `PageMeta`) and `CursorPaginated<T>` (`CursorMeta`), plus `PageParams` / `CursorParams`. Lazy streams: `paginate_pages` / `paginate_cursor` return `Pages<'a, P>` (boxed, `Send`, `Unpin`); `Pages::items()` returns `Items`. Params implement `PageQuery` / `CursorQuery` through the crate-private `impl_page_query!` / `impl_cursor_query!` macros, invoked next to each params struct.
 - `src/ids.rs` — `create_trace_id(seed)` / `create_observation_id(seed)`: random W3C IDs, or `SHA-256(seed)` truncated to 16/8 bytes.
+- `src/prompt_cache.rs` (crate-private) — cache behind `PromptsClient::get_cached`: `Mutex<State>` with entries (`Arc<Prompt>` + expiry; expired entries stay readable), the keys being refreshed (claimed through a `RefreshGuard` dropped at the end of the background `tokio` task) and a generation counter bumped by `invalidate`/`clear`, so a fetch that started before an invalidation is not written back. Shared by `PromptsClient` and `PromptVersionClient`; `create`, `delete*` and `prompt_versions.update` invalidate the prompt name. Per-call `max_retries` / `fetch_timeout` go through the crate-private `RequestOptions` of `HttpClient` (`get_with_query_options`).
+- Prompt compilation lives in `src/models/prompts.rs`: `Prompt::variables`, `compile`, `compile_with_placeholders` (`CompiledPrompt`) and the private `{{variable}}` template engine with its unit tests.
 
 **API clients** (`src/api/`): One file per resource group. Each struct holds `Arc<HttpClient>`; query-param structs live next to the client. API paths use the `/api/public/` prefix.
 

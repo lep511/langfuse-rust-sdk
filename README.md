@@ -13,6 +13,7 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 - Cursor-based and page-based pagination, with lazy `*_pages` streams that follow every page
 - Configuration from `LANGFUSE_*` environment variables (`ClientConfig::from_env`)
 - Trace and observation IDs, random or derived from a seed (`ids::create_trace_id(Some(seed))`)
+- Prompt management: client-side cache with background refresh and fallbacks (`prompts.get_cached`), `{{variable}}` and placeholder compilation
 - `auth_check()` and `trace_url(trace_id)` helpers; `LangfuseClient` is cheap to `Clone`
 
 ## Supported Resources
@@ -25,7 +26,7 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 | `observations` | List (cursor) |
 | `datasets` | Create, list (page), get by name |
 | `dataset_items` | Create, list (page), get, delete |
-| `prompts` | Create, list (page), get, delete (all versions or by label/version) |
+| `prompts` | Create, list (page), get, get through the cache, delete (all versions or by label/version) |
 | `prompt_versions` | Update labels |
 | `models` | Create, list (page), get, upsert, delete |
 | `skills` | Create version, list (page), get, update tags, set labels, delete version, get file contents |
@@ -54,7 +55,7 @@ The unstable APIs may change without notice upstream. Enable them with:
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.3", features = ["unstable"] }
+langfuse-rust-sdk = { version = "0.4", features = ["unstable"] }
 ```
 
 ## Quick Start
@@ -187,6 +188,43 @@ let config = ClientConfig::builder("pk-lf-...", "sk-lf-...")
 A base URL with a path (`https://example.com/langfuse`) is kept as a prefix of every request.
 `LangfuseClient` is cheap to clone: clones share the connection pool, so move one into each task.
 
+## Prompts
+
+`prompts.get_cached` serves prompts from an in-memory cache (shared by clones of the client):
+a fresh prompt is returned without a request, an expired one is returned immediately while a
+background task refreshes it, and a fallback can cover the first fetch when Langfuse is
+unreachable. Creating, deleting or relabelling a prompt through the client invalidates it.
+
+```rust
+use langfuse_rust_sdk::api::prompts::{GetPromptOptions, PromptFallback, PromptSelector};
+use langfuse_rust_sdk::models::prompts::ChatMessage;
+use serde_json::json;
+use std::time::Duration;
+
+let options = GetPromptOptions {
+    selector: PromptSelector::label("production"),        // default; or PromptSelector::Version(3)
+    cache_ttl: Some(Duration::from_secs(300)),             // default: 60 s (`prompt_cache_ttl`)
+    fallback: Some(PromptFallback::Text("Summarize: {{text}}".into())),
+    ..Default::default()                                   // also: max_retries, fetch_timeout
+};
+let prompt = client.prompts.get_cached("summarizer", &options).await?;
+println!("{:?}", prompt.variables());                     // ["text"]
+let text = prompt.compile(&json!({"text": "..."}))?.into_text();
+
+// Chat prompts: fill placeholders with message lists; their contents are compiled too.
+let history = vec![ChatMessage { role: "user".into(), content: "Hi, I'm {{name}}".into() }];
+let messages = client
+    .prompts
+    .get_cached("support-chat", &GetPromptOptions::default())
+    .await?
+    .compile_with_placeholders(&json!({"name": "Ada"}), [("history", &history)])?
+    .into_chat();
+```
+
+Variables come from anything that serializes to a JSON object (`json!`, maps, structs).
+Unknown `{{variables}}` are left untouched, `null` becomes an empty string and non-string values
+are inserted as compact JSON.
+
 ## Pagination
 
 Every list method returning `Paginated<T>` or `CursorPaginated<T>` has a `*_pages` companion
@@ -252,11 +290,12 @@ src/
   retry.rs          — RetryPolicy (exponential backoff + jitter)
   pagination.rs     — Paginated<T>, CursorPaginated<T>, query param types, Pages/Items streams
   ids.rs            — Trace and observation ID generation (random or seeded)
+  prompt_cache.rs   — In-memory cache behind prompts.get_cached (crate-private)
   models/           — Typed request/response structs for all resources
   api/              — Resource clients (one per API group)
 examples/           — 21 runnable examples covering all major features
 tests/              — wiremock HTTP tests (api_*), serde tests, config tests
-                      (364 tests in total with --all-features, 337 without)
+                      (424 tests in total with --all-features, 397 without)
 ```
 
 ## Requirements

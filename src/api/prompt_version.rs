@@ -7,10 +7,13 @@ use serde::Serialize;
 use crate::error::LangfuseError;
 use crate::http::{HttpClient, encode_path_segment};
 use crate::models::prompts::Prompt;
+use crate::prompt_cache::PromptCache;
 
 #[derive(Clone)]
 pub struct PromptVersionClient {
     pub(crate) http: Arc<HttpClient>,
+    /// The cache of [`PromptsClient`](crate::api::prompts::PromptsClient), invalidated on update.
+    pub(crate) cache: Arc<PromptCache>,
 }
 
 /// Body of `PATCH /api/public/v2/prompts/{name}/versions/{version}`.
@@ -22,14 +25,16 @@ pub struct UpdatePromptVersionRequest {
 }
 
 impl PromptVersionClient {
-    /// Replace the labels of one prompt version.
+    /// Replace the labels of one prompt version. Invalidates the cached
+    /// versions of the prompt, since labels may now point elsewhere.
     pub async fn update(
         &self,
         name: &str,
         version: i64,
         req: &UpdatePromptVersionRequest,
     ) -> Result<Prompt, LangfuseError> {
-        self.http
+        let prompt = self
+            .http
             .patch(
                 &format!(
                     "/api/public/v2/prompts/{}/versions/{version}",
@@ -37,6 +42,8 @@ impl PromptVersionClient {
                 ),
                 req,
             )
-            .await
+            .await?;
+        self.cache.invalidate(name);
+        Ok(prompt)
     }
 }

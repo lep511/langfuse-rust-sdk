@@ -11,6 +11,7 @@ use crate::retry::RetryPolicy;
 
 const DEFAULT_BASE_URL: &str = "https://cloud.langfuse.com";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_PROMPT_CACHE_TTL: Duration = Duration::from_secs(60);
 const SDK_NAME: &str = "rust";
 const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -24,6 +25,8 @@ pub const ENV_BASE_URL: &str = "LANGFUSE_BASE_URL";
 pub const ENV_HOST: &str = "LANGFUSE_HOST";
 /// Environment variable holding the request timeout in seconds (e.g. `10` or `2.5`).
 pub const ENV_TIMEOUT: &str = "LANGFUSE_TIMEOUT";
+/// Environment variable holding the default prompt cache TTL in seconds (`0` disables caching).
+pub const ENV_PROMPT_CACHE_TTL: &str = "LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS";
 
 /// Resolved configuration consumed by [`LangfuseClient::new`](crate::LangfuseClient::new).
 ///
@@ -39,6 +42,7 @@ pub struct ClientConfig {
     pub(crate) timeout: Option<Duration>,
     pub(crate) retry_policy: RetryPolicy,
     pub(crate) http_client: Option<reqwest::Client>,
+    pub(crate) prompt_cache_ttl: Duration,
 }
 
 impl ClientConfig {
@@ -53,6 +57,7 @@ impl ClientConfig {
             extra_headers: HeaderMap::new(),
             header_error: None,
             http_client: None,
+            prompt_cache_ttl: None,
         }
     }
 
@@ -77,6 +82,11 @@ impl ClientConfig {
     pub fn timeout(&self) -> Duration {
         self.timeout.unwrap_or(DEFAULT_TIMEOUT)
     }
+
+    /// Default time-to-live of cached prompts (default: 60 s; zero disables caching).
+    pub fn prompt_cache_ttl(&self) -> Duration {
+        self.prompt_cache_ttl
+    }
 }
 
 /// Builder for [`ClientConfig`].
@@ -92,6 +102,7 @@ pub struct ConfigBuilder {
     /// First invalid [`header`](Self::header) call, reported by [`build`](Self::build).
     header_error: Option<String>,
     http_client: Option<reqwest::Client>,
+    prompt_cache_ttl: Option<Duration>,
 }
 
 impl ConfigBuilder {
@@ -105,9 +116,10 @@ impl ConfigBuilder {
     /// | `LANGFUSE_BASE_URL` | API base URL (default: `https://cloud.langfuse.com`) |
     /// | `LANGFUSE_HOST` | Deprecated alias of `LANGFUSE_BASE_URL`, used only when that is unset |
     /// | `LANGFUSE_TIMEOUT` | Request timeout in seconds, e.g. `10` or `2.5` (default: 30) |
+    /// | `LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS` | Default prompt cache TTL in seconds; `0` disables caching (default: 60) |
     ///
-    /// Empty values count as unset. Missing keys and an invalid
-    /// `LANGFUSE_TIMEOUT` return [`LangfuseError::Config`]. The variables are
+    /// Empty values count as unset. Missing keys and invalid numbers return
+    /// [`LangfuseError::Config`]. The variables are
     /// read from the process environment; load a `.env` file first (e.g. with
     /// `dotenvy`) if needed.
     pub fn from_env() -> Result<Self, LangfuseError> {
@@ -129,7 +141,10 @@ impl ConfigBuilder {
             builder = builder.base_url(url);
         }
         if let Some(raw) = var(ENV_TIMEOUT) {
-            builder = builder.timeout(parse_timeout_secs(&raw)?);
+            builder = builder.timeout(parse_secs(ENV_TIMEOUT, &raw, false)?);
+        }
+        if let Some(raw) = var(ENV_PROMPT_CACHE_TTL) {
+            builder = builder.prompt_cache_ttl(parse_secs(ENV_PROMPT_CACHE_TTL, &raw, true)?);
         }
         Ok(builder)
     }
@@ -173,6 +188,14 @@ impl ConfigBuilder {
                     .get_or_insert_with(|| format!("Invalid value for header '{name}': {e}"));
             }
         }
+        self
+    }
+
+    /// Default time-to-live of prompts cached by
+    /// [`PromptsClient::get_cached`](crate::api::prompts::PromptsClient::get_cached)
+    /// (default: 60 s). `Duration::ZERO` disables caching unless a call sets its own TTL.
+    pub fn prompt_cache_ttl(mut self, ttl: Duration) -> Self {
+        self.prompt_cache_ttl = Some(ttl);
         self
     }
 
@@ -224,20 +247,26 @@ impl ConfigBuilder {
             timeout: self.timeout,
             retry_policy: self.retry_policy.unwrap_or_default(),
             http_client: self.http_client,
+            prompt_cache_ttl: self.prompt_cache_ttl.unwrap_or(DEFAULT_PROMPT_CACHE_TTL),
         })
     }
 }
 
-/// Parse `LANGFUSE_TIMEOUT` (seconds, integer or decimal, greater than zero).
-fn parse_timeout_secs(raw: &str) -> Result<Duration, LangfuseError> {
+/// Parse a duration in seconds (integer or decimal) from environment variable `name`.
+fn parse_secs(name: &str, raw: &str, allow_zero: bool) -> Result<Duration, LangfuseError> {
     raw.trim()
         .parse::<f64>()
         .ok()
-        .filter(|secs| *secs > 0.0)
+        .filter(|secs| *secs > 0.0 || (allow_zero && *secs == 0.0))
         .and_then(|secs| Duration::try_from_secs_f64(secs).ok())
         .ok_or_else(|| {
+            let bound = if allow_zero {
+                "0 or more"
+            } else {
+                "greater than 0"
+            };
             LangfuseError::Config(format!(
-                "Invalid {ENV_TIMEOUT} '{raw}': expected a number of seconds greater than 0"
+                "Invalid {name} '{raw}': expected a number of seconds {bound}"
             ))
         })
 }
@@ -326,6 +355,36 @@ mod tests {
         for raw in ["abc", "0", "-3", "NaN", "inf"] {
             let msg = config_error(from_vars(&[KEYS[0], KEYS[1], ("LANGFUSE_TIMEOUT", raw)]));
             assert!(msg.contains("LANGFUSE_TIMEOUT"), "{raw}: {msg}");
+        }
+    }
+
+    #[test]
+    fn from_env_reads_prompt_cache_ttl() {
+        let config = from_vars(&KEYS).unwrap().build().unwrap();
+        assert_eq!(config.prompt_cache_ttl(), Duration::from_secs(60));
+
+        for (raw, expected) in [("300", 300_000), ("0", 0), ("1.5", 1_500)] {
+            let config = from_vars(&[
+                KEYS[0],
+                KEYS[1],
+                ("LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS", raw),
+            ])
+            .unwrap()
+            .build()
+            .unwrap();
+            assert_eq!(config.prompt_cache_ttl(), Duration::from_millis(expected));
+        }
+
+        for raw in ["-1", "soon"] {
+            let msg = config_error(from_vars(&[
+                KEYS[0],
+                KEYS[1],
+                ("LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS", raw),
+            ]));
+            assert!(
+                msg.contains("LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS"),
+                "{msg}"
+            );
         }
     }
 
