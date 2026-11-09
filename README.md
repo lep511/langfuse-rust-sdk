@@ -54,7 +54,7 @@ The unstable APIs may change without notice upstream. Enable them with:
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.2", features = ["unstable"] }
+langfuse-rust-sdk = { version = "0.3", features = ["unstable"] }
 ```
 
 ## Quick Start
