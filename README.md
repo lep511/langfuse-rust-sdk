@@ -111,6 +111,7 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 EOF
 
 cargo run --example <name>
+cargo run --example dashboards --features unstable   # unstable APIs
 
 # Option 2: inline env vars
 LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example <name>
@@ -129,6 +130,16 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`observations`](examples/observations.rs) | List recent observations with a formatted table output |
 | [`otel_ingestion`](examples/otel_ingestion.rs) | Ingest OpenTelemetry trace spans into Langfuse |
 | [`error_handling`](examples/error_handling.rs) | Handle config errors, 404s, auth failures, and graceful fallbacks |
+| [`metrics_query`](examples/metrics_query.rs) | Query cost and tokens per model and a daily trend with the Metrics API (read-only) |
+| [`experiments`](examples/experiments.rs) | List recent experiments with scores and inspect their items (read-only) |
+| [`comments`](examples/comments.rs) | Comment on a trace, then list and fetch its comments (writes a comment) |
+| [`annotation_queues`](examples/annotation_queues.rs) | Queue a trace for human review, complete it, and remove the item (writes data) |
+| [`evaluators`](examples/evaluators.rs) | Create an LLM-as-a-judge evaluator and a disabled evaluation rule, then delete both |
+| [`prompt_labels`](examples/prompt_labels.rs) | Create prompt versions in a folder, promote one to `production`, filter, and delete |
+| [`llm_connections`](examples/llm_connections.rs) | List LLM connections; optionally upsert and delete a temporary one |
+| [`organization_admin`](examples/organization_admin.rs) | Projects, members, API keys and blob storage exports (organization key, read-only) |
+| [`scim_users`](examples/scim_users.rs) | SCIM provider config and paginated user list (organization key, read-only) |
+| [`dashboards`](examples/dashboards.rs) | Build a dashboard with three widgets, pause so you can open it in the UI, then delete it (`--features unstable`) |
 
 ## Configuration
 
@@ -183,7 +194,7 @@ src/
   pagination.rs     — Paginated<T>, CursorPaginated<T>, query param types
   models/           — Typed request/response structs for all resources
   api/              — Resource clients (one per API group)
-examples/           — 11 runnable examples covering all major features
+examples/           — 21 runnable examples covering all major features
 tests/              — wiremock HTTP tests (api_*), serde tests, config tests
                       (313 tests in total with --all-features, 287 without)
 ```

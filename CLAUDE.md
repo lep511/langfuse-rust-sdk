@@ -17,9 +17,10 @@ cargo test --test serde_tests              # Serialization tests of the original
 cargo test --lib                           # In-crate unit tests (retry, http, yaml_tool)
 cargo clippy --all-targets --all-features -- -D warnings
 cargo run --example health_check           # Example against the real API (needs .env)
+cargo run --example dashboards --features unstable  # Examples of unstable APIs need the feature
 ```
 
-Tests never touch the network. HTTP behaviour is tested with `wiremock` in `tests/api_*_tests.rs`; shared helpers live in `tests/common/mod.rs` (`test_client()`, `test_client_with_retries(n)`, `json(status, body)`, `single_request`, `query_pairs`, `query_value`). Test files for unstable APIs start with `#![cfg(feature = "unstable")]`. Examples in `examples/` hit the real Langfuse API and need `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` via `.env` or environment.
+Tests never touch the network. HTTP behaviour is tested with `wiremock` in `tests/api_*_tests.rs`; shared helpers live in `tests/common/mod.rs` (`test_client()`, `test_client_with_retries(n)`, `json(status, body)`, `single_request`, `query_pairs`, `query_value`). Test files for unstable APIs start with `#![cfg(feature = "unstable")]`. Examples in `examples/` hit the real Langfuse API; each doc comment says whether it writes data and how it cleans up. Examples using unstable APIs are declared in `Cargo.toml` with `required-features = ["unstable"]`. Examples need `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` via `.env` or environment.
 
 ## Architecture
 

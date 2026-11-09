@@ -98,6 +98,9 @@ most of them failed at runtime against the real API before.
   `patch_no_content`, `delete_no_content_with_query`, `post_no_response_with_headers`.
 - Constructors for requests with many optional fields (`CreateScoreRequest::new`,
   `CreateModelRequest::new`, `GetMediaUploadUrlRequest::new`, ...).
+- 10 new examples: `metrics_query`, `experiments`, `comments`, `annotation_queues`,
+  `evaluators`, `prompt_labels`, `llm_connections`, `organization_admin`, `scim_users`
+  and `dashboards` (requires `--features unstable`).
 - 149 wiremock HTTP tests (`tests/api_*_tests.rs`, shared helpers in `tests/common`)
   and serde tests for every new model.
 
