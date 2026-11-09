@@ -4,6 +4,54 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.5.0] - 2026-11-09
+
+Native tracing on OpenTelemetry, behind the new `otel` feature. Without the
+feature nothing changes.
+
+### Added
+
+- **`otel` feature** (depends on `opentelemetry` / `opentelemetry_sdk` 0.33,
+  re-exported as `otel::opentelemetry` and `otel::opentelemetry_sdk`).
+- `LangfuseClient::tracer(TracingOptions)` / `LangfuseTracer::new` create a
+  tracer with its own `SdkTracerProvider`: spans are queued and exported in the
+  background through `IngestionClient` (same authentication, retries and HTTP
+  client), every `flush_interval` (5 s) or `flush_at` (512) spans, split to stay
+  under `max_batch_bytes` (1 MiB). `flush().await` and `shutdown().await` wait
+  for the export. `provider()` exposes the provider for other instrumentation.
+- `Observation` (from `tracer.start_observation(name, ObservationType)`), with
+  10 types: span, generation, event, agent, tool, chain, retriever, embedding,
+  evaluator and guardrail. Setters `set_input`, `set_output`, `set_metadata`
+  (merged per key), `set_version`, `set_level`, `set_status_message`,
+  `set_name`, `set_trace_as_public` and, for generations and embeddings,
+  `set_model`, `set_model_parameters`, `set_usage_details`,
+  `set_cost_details`, `set_completion_start_time` and `set_prompt`. Setters
+  never fail and the attributes are written once when the observation ends
+  (`end()`, or when the last handle drops). `Level::Error` marks the span as
+  failed; events end where they start.
+- Context: `Observation::in_scope(future)` makes an observation current
+  (children, `Observation::current()`, `otel::current_trace_id()`,
+  `otel::current_observation_id()`); `start_child` inherits the attributes of
+  the current scope.
+- `otel::propagate_attributes(PropagatedAttributes, future)`: user, session,
+  tags, metadata, version, trace name, environment and prompt for every span of
+  a scope, validated and merged across nested scopes, optionally as W3C
+  baggage (`as_baggage`), which is also read back from incoming context.
+- `TraceContext` + `tracer.start_observation_in_trace` attach observations to
+  an existing trace (and parent observation).
+- `TracingOptions` (`from_env()` reads `LANGFUSE_TRACING_ENVIRONMENT`,
+  `LANGFUSE_RELEASE`, `LANGFUSE_SAMPLE_RATE`, `LANGFUSE_TRACING_ENABLED`,
+  `LANGFUSE_FLUSH_AT`, `LANGFUSE_FLUSH_INTERVAL`,
+  `LANGFUSE_OTEL_MAX_BATCH_SIZE_BYTES`): environment and release, trace-ID
+  ratio sampling, `enabled = false` for no-ops, `mask` for input, output and
+  metadata, and `should_export_span` with the default filter
+  `is_default_export_span` (Langfuse observations, `gen_ai.*` spans and known
+  LLM instrumentation scopes). The first exported span of the application in
+  each trace is marked as its root.
+- `otel::attributes` exposes the attribute keys Langfuse reads.
+- `LangfuseClient::public_key()`.
+- Example `otel_tracing` (`--features otel`).
+
 ## [0.4.1] - 2026-11-09
 
 ### Added

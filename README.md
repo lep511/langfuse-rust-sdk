@@ -15,6 +15,7 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 - Trace and observation IDs, random or derived from a seed (`ids::create_trace_id(Some(seed))`)
 - Prompt management: client-side cache with background refresh and fallbacks (`prompts.get_cached`), `{{variable}}` and placeholder compilation
 - `auth_check()` and `trace_url(trace_id)` helpers; `LangfuseClient` is cheap to `Clone`
+- Tracing on OpenTelemetry (feature `otel`): observations, context and attribute propagation, sampling, masking and batched export
 
 ## Supported Resources
 
@@ -55,7 +56,7 @@ The unstable APIs may change without notice upstream. Enable them with:
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.4", features = ["unstable"] }
+langfuse-rust-sdk = { version = "0.5", features = ["unstable"] }
 ```
 
 ## Quick Start
@@ -133,6 +134,7 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`skills`](examples/skills.rs) | Create a skill version with files, fetch with content, list all |
 | [`observations`](examples/observations.rs) | List recent observations with a formatted table output |
 | [`otel_ingestion`](examples/otel_ingestion.rs) | Ingest an OpenTelemetry span with tags and print its URL in the UI (writes one trace) |
+| [`otel_tracing`](examples/otel_tracing.rs) | Trace a request with nested observations and user/session attributes (`--features otel`, writes one trace) |
 | [`error_handling`](examples/error_handling.rs) | Handle config errors, 404s, auth failures, and graceful fallbacks |
 | [`metrics_query`](examples/metrics_query.rs) | Query cost and tokens per model and a daily trend with the Metrics API (read-only) |
 | [`experiments`](examples/experiments.rs) | List recent experiments with scores and inspect their items (read-only) |
@@ -230,6 +232,65 @@ Variables come from anything that serializes to a JSON object (`json!`, maps, st
 Unknown `{{variables}}` are left untouched, `null` becomes an empty string and non-string values
 are inserted as compact JSON.
 
+## Tracing (feature `otel`)
+
+```toml
+[dependencies]
+langfuse-rust-sdk = { version = "0.5", features = ["otel"] }
+```
+
+A `LangfuseTracer` creates observations as OpenTelemetry spans and exports them in the
+background. Make an observation current with `in_scope` so the ones started inside become its
+children, and add trace attributes to a whole scope with `propagate_attributes`:
+
+```rust
+use langfuse_rust_sdk::otel::{ObservationType, PropagatedAttributes, TracingOptions, propagate_attributes};
+use serde_json::json;
+
+let tracer = client.tracer(TracingOptions::from_env()?)?;   // inside a Tokio runtime
+
+let request = tracer.start_observation("chat-request", ObservationType::Agent);
+request.set_input(&json!({"question": "Hi"}));
+
+let user = PropagatedAttributes {
+    user_id: Some("user-42".into()),
+    session_id: Some("session-7".into()),
+    tags: vec!["beta".into()],
+    ..Default::default()
+};
+request
+    .in_scope(propagate_attributes(user, async {
+        let generation = tracer.start_observation("llm", ObservationType::Generation);
+        generation.set_model("gpt-4o").set_input("Hi");
+        // ... call the model ...
+        generation.set_output("Hello!").set_usage_details(&json!({"input": 3, "output": 2}));
+        generation.end();
+    }))
+    .await;
+request.set_output("Hello!");
+request.end();
+
+tracer.shutdown().await;   // export queued spans before exiting
+```
+
+- **Types:** span, generation, event, agent, tool, chain, retriever, embedding, evaluator,
+  guardrail. Model, usage, cost, completion start time and prompt apply to generations and
+  embeddings.
+- **Context:** `Observation::current()`, `otel::current_trace_id()`,
+  `otel::current_observation_id()`. The context follows the future, not spawned tasks: wrap
+  those with `in_scope` too. `tracer.start_observation_in_trace(.., &TraceContext)`
+  continues a trace started elsewhere.
+- **Options** (`TracingOptions`, or `from_env()` with `LANGFUSE_TRACING_ENVIRONMENT`,
+  `LANGFUSE_RELEASE`, `LANGFUSE_SAMPLE_RATE`, `LANGFUSE_TRACING_ENABLED`, `LANGFUSE_FLUSH_AT`,
+  `LANGFUSE_FLUSH_INTERVAL`, `LANGFUSE_OTEL_MAX_BATCH_SIZE_BYTES`): environment, release,
+  sampling, enabled, batching, `mask` (redacts input, output and metadata) and
+  `should_export_span`.
+- **Other instrumentation:** `tracer.provider()` is a regular `SdkTracerProvider`. Spans of
+  other libraries are exported when they have `gen_ai.*` attributes or come from a known LLM
+  instrumentation scope (`is_default_export_span`), or whatever `should_export_span` accepts.
+  `#[tracing::instrument]` spans can be bridged with `tracing-opentelemetry` (see the `otel`
+  module docs).
+
 ## Pagination
 
 Every list method returning `Paginated<T>` or `CursorPaginated<T>` has a `*_pages` companion
@@ -305,11 +366,13 @@ src/
   pagination.rs     — Paginated<T>, CursorPaginated<T>, query param types, Pages/Items streams
   ids.rs            — Trace and observation ID generation (random or seeded)
   prompt_cache.rs   — In-memory cache behind prompts.get_cached (crate-private)
+  otel/             — Tracing on OpenTelemetry (feature `otel`): tracer, observations,
+                      propagation, span processor, batched exporter
   models/           — Typed request/response structs for all resources
   api/              — Resource clients (one per API group)
 examples/           — 21 runnable examples covering all major features
 tests/              — wiremock HTTP tests (api_*), serde tests, config tests
-                      (439 tests in total with --all-features, 412 without)
+                      (480 tests in total with --all-features, 412 without)
 ```
 
 ## Requirements

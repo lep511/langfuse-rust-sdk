@@ -4,23 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Rust SDK for the Langfuse LLM observability API. Async-only, built on `reqwest` + `tokio`. Targets Rust 1.99+ (edition 2024). The SDK implements all 120 operations of `openapi.yml`; the 21 `/api/public/unstable/*` operations are behind the `unstable` Cargo feature.
+Rust SDK for the Langfuse LLM observability API. Async-only, built on `reqwest` + `tokio`. Targets Rust 1.99+ (edition 2024). The SDK implements all 120 operations of `openapi.yml`; the 21 `/api/public/unstable/*` operations are behind the `unstable` Cargo feature. Native tracing on OpenTelemetry (`src/otel/`) is behind the `otel` feature.
 
 ## Build & Test Commands
 
 ```bash
 cargo build                                # Build the library
 cargo test                                 # All tests without unstable APIs (412)
-cargo test --all-features                  # Including unstable APIs (439)
+cargo test --all-features                  # Including unstable and otel APIs (480)
 cargo test --test api_scores_tests         # One wiremock test file
 cargo test --test serde_tests              # Serialization tests of the original models
 cargo test --lib                           # In-crate unit tests (retry, http, config from_env, ids, prompt templates, prompt_cache, yaml_tool)
 cargo clippy --all-targets --all-features -- -D warnings
 cargo run --example health_check           # Example against the real API (needs .env)
 cargo run --example dashboards --features unstable  # Examples of unstable APIs need the feature
+cargo test --features otel --test otel_tests          # Tracing tests (exported OTLP bodies checked with wiremock)
+cargo run --example otel_tracing --features otel      # Tracing example against the real API
 ```
 
-Tests never touch the network. HTTP behaviour is tested with `wiremock` in `tests/api_*_tests.rs`; shared helpers live in `tests/common/mod.rs` (`test_client()`, `test_client_with_retries(n)`, `json(status, body)`, `single_request`, `query_pairs`, `query_value`). Client helpers (`Clone`, `auth_check`, `trace_url`, custom `reqwest::Client`) are tested in `tests/client_tests.rs` the `*_pages` streams in `tests/pagination_tests.rs` (which consumes them with the `futures` dev-dependency), prompt compilation in `tests/prompt_compile_tests.rs` and `get_cached` in `tests/prompt_cache_tests.rs` (timing-based: short TTLs and delayed mocks, polled with bounded waits). Test files for unstable APIs start with `#![cfg(feature = "unstable")]`. Examples in `examples/` hit the real Langfuse API; each doc comment says whether it writes data and how it cleans up. Examples using unstable APIs are declared in `Cargo.toml` with `required-features = ["unstable"]`. Examples build their client with `ClientConfig::from_env()` and need `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` via `.env` or environment.
+Tests never touch the network. HTTP behaviour is tested with `wiremock` in `tests/api_*_tests.rs`; shared helpers live in `tests/common/mod.rs` (`test_client()`, `test_client_with_retries(n)`, `json(status, body)`, `single_request`, `query_pairs`, `query_value`). Client helpers (`Clone`, `auth_check`, `trace_url`, custom `reqwest::Client`) are tested in `tests/client_tests.rs` the `*_pages` streams in `tests/pagination_tests.rs` (which consumes them with the `futures` dev-dependency), prompt compilation in `tests/prompt_compile_tests.rs` and `get_cached` in `tests/prompt_cache_tests.rs` (timing-based: short TTLs and delayed mocks, polled with bounded waits). Test files for unstable APIs start with `#![cfg(feature = "unstable")]`; `tests/otel_tests.rs` starts with `#![cfg(feature = "otel")]`, builds tracers with `flush_interval` of one hour and parses the OTLP/JSON bodies posted to `/api/public/otel/v1/traces`. Examples in `examples/` hit the real Langfuse API; each doc comment says whether it writes data and how it cleans up. Examples using unstable APIs are declared in `Cargo.toml` with `required-features = ["unstable"]`. Examples build their client with `ClientConfig::from_env()` and need `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` via `.env` or environment.
 
 ## Architecture
 
@@ -51,6 +53,14 @@ Tests never touch the network. HTTP behaviour is tested with `wiremock` in `test
 - Wire names that `camelCase` cannot produce need explicit renames: `baseURL`, SCIM `Resources`, `row_limit`, `show_value_labels`, `every_20_minutes`, filter operators with spaces, `orderBy` values with dots.
 - JSON-in-query parameters (`filter`, metrics `query`) are `String`s (or typed and serialized with `serde_json::to_string`, as in `MetricsClient::query`). `ListObservationsParams` serializes as key/value pairs so `environment` can repeat.
 - Shared types: `evaluation_common.rs` (evaluators + evaluation rules: `Creator`, variable mappings, `PublicApiError`, `EvaluationRuleReadFilter`), `unstable_common.rs` (`UnstablePublicApiError`, `DashboardWidgetFilter`).
+
+**Tracing** (`src/otel/`, feature `otel`; `opentelemetry`/`opentelemetry_sdk` 0.33, re-exported from `otel`):
+- `tracer.rs` — `LangfuseTracer` (`LangfuseClient::tracer`): its own `SdkTracerProvider` (resource `langfuse.environment`/`langfuse.release`, `TraceIdRatioBased` sampler, `AlwaysOff` when disabled), scope `langfuse-sdk` with attribute `public_key`, and a Tokio export task (so it must be created inside a runtime). `flush`/`shutdown` are async and wait for the task.
+- `observation.rs` — `Observation` holds `Arc<Inner>`: the OpenTelemetry `Context` with the span, plus a `Mutex` buffer of attributes written once at `end` (or when the last handle drops), because the SDK's `set_attribute` appends duplicates and caps attributes per span. `in_scope`/`context()` put a `CurrentObservation` value and the `langfuse_trace_id` baggage claim in the context; `in_scope` builds its context lazily (first poll), as does `propagate_attributes` (an `async fn`), so scopes nest in either order.
+- `propagation.rs` — `PropagatedState` (validated, merged) stored as a context value; `inherited_attributes` (state + `langfuse_*` baggage) is applied by the processor in `on_start`.
+- `processor.rs` — `LangfuseSpanProcessor`: `on_start` propagation and the app-root mark (`langfuse.internal.is_app_root`), `on_end` filtering (`should_export_span`, foreign-project spans) and non-blocking `try_send` to the export task; the default filters (`is_default_export_span`, ...).
+- `exporter.rs` — export task (batches by `flush_at`, `flush_interval`, `max_batch_bytes`) and the `SpanData` → `IngestTracesRequest` conversion (attributes de-duplicated last-wins, grouped by scope), sent with `IngestionClient` (idempotent retries).
+- `attributes.rs` — public attribute keys; input/output as raw strings or compact JSON, metadata flattened to `<prefix>.<key>` with JSON-encoded values, integers beyond 2^53 as strings.
 
 **Tools** (`src/tools/`): `YamlTool` — standalone YAML utility (read/write/merge/validate/frontmatter extraction) using `serde_norway` (maintained `serde_yaml` fork; `serde_yml` was dropped for RUSTSEC-2025-0068). Not part of the API client.
 

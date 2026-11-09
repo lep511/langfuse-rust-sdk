@@ -35,7 +35,6 @@ pub const ENV_PROMPT_CACHE_TTL: &str = "LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECOND
 pub struct ClientConfig {
     pub(crate) base_url: Url,
     pub(crate) auth_header: HeaderValue,
-    #[allow(dead_code)]
     pub(crate) public_key: String,
     pub(crate) default_headers: HeaderMap,
     /// `None` when [`ConfigBuilder::timeout`] was never called.

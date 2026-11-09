@@ -56,6 +56,13 @@
 //!     .expect("valid config");
 //! ```
 //!
+//! # Tracing
+//!
+//! With the `otel` feature, `LangfuseClient::tracer` returns an
+//! `otel::LangfuseTracer` that records observations (spans, generations,
+//! agents, tools, ...) as OpenTelemetry spans and exports them in the
+//! background; see the `otel` module.
+//!
 //! # Error handling
 //!
 //! Every method returns `Result<T, `[`LangfuseError`]`>`.  HTTP status codes
@@ -88,6 +95,9 @@ pub mod http;
 pub mod ids;
 /// Request and response model structs generated from the OpenAPI spec.
 pub mod models;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+#[cfg(feature = "otel")]
+pub mod otel;
 /// Pagination helpers for list endpoints.
 pub mod pagination;
 mod prompt_cache;
@@ -207,12 +217,14 @@ pub struct LangfuseClient {
     http: Arc<HttpClient>,
     /// Project of the API keys, resolved once by [`Self::auth_check`].
     project_id: Arc<OnceLock<String>>,
+    public_key: Arc<str>,
 }
 
 impl LangfuseClient {
     /// Create a new client from the given configuration.
     pub fn new(config: ClientConfig) -> Result<Self, LangfuseError> {
         let prompt_cache = Arc::new(prompt_cache::PromptCache::new(config.prompt_cache_ttl));
+        let public_key: Arc<str> = Arc::from(config.public_key.as_str());
         let http = Arc::new(HttpClient::new(config)?);
         Ok(Self {
             health: HealthClient {
@@ -306,7 +318,23 @@ impl LangfuseClient {
             },
             http,
             project_id: Arc::new(OnceLock::new()),
+            public_key,
         })
+    }
+
+    /// The public API key of this client.
+    pub fn public_key(&self) -> &str {
+        &self.public_key
+    }
+
+    /// Create a [`LangfuseTracer`](otel::LangfuseTracer) exporting through this
+    /// client (feature `otel`). Must be called inside a Tokio runtime.
+    #[cfg(feature = "otel")]
+    pub fn tracer(
+        &self,
+        options: otel::TracingOptions,
+    ) -> Result<otel::LangfuseTracer, LangfuseError> {
+        otel::LangfuseTracer::new(self, options)
     }
 
     /// Verify the API keys and return the project they belong to.
