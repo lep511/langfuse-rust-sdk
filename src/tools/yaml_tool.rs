@@ -1,3 +1,5 @@
+//! YAML read/write/merge/validate/frontmatter utilities.
+
 use std::fs;
 use std::path::Path;
 
@@ -5,16 +7,22 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_norway::Value;
 
+/// Errors produced by [`YamlTool`] operations.
 #[derive(Debug, thiserror::Error)]
 pub enum YamlError {
+    /// An I/O error reading or writing a file.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// A YAML parsing or serialization error.
     #[error("YAML parse error: {0}")]
     Parse(#[from] serde_norway::Error),
+    /// A dot-path field lookup failed.
     #[error("Field not found: {0}")]
     FieldNotFound(String),
 }
 
+/// Stateless helper for common YAML operations: read, write, merge, validate,
+/// JSON conversion and frontmatter extraction.
 pub struct YamlTool;
 
 impl YamlTool {

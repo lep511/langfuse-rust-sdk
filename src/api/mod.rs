@@ -1,3 +1,9 @@
+//! API client modules — one struct per Langfuse resource group.
+//!
+//! Each client holds a shared [`HttpClient`](crate::http::HttpClient) and
+//! exposes async methods that map 1-to-1 to the Langfuse REST API operations.
+#![allow(missing_docs)]
+
 pub mod annotation_queues;
 pub mod blob_storage_integrations;
 pub mod comments;

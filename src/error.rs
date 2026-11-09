@@ -1,80 +1,121 @@
+//! Error types returned by every SDK method.
+
 use std::time::Duration;
 
 use reqwest::StatusCode;
 
+/// Errors returned by all [`LangfuseClient`](crate::LangfuseClient) methods.
+///
+/// HTTP status codes are mapped to dedicated variants so callers can match on
+/// specific failure modes (rate-limiting, not-found, conflict, …).
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum LangfuseError {
+    /// HTTP 400 — the request was malformed or invalid.
     #[error("Bad request (400): {message}")]
     BadRequest {
+        /// Human-readable error message from the server.
         message: String,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// HTTP 401 — missing or invalid API credentials.
     #[error("Unauthorized (401): {message}")]
     Unauthorized {
+        /// Human-readable error message from the server.
         message: String,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// HTTP 403 — the authenticated user lacks permission.
     #[error("Access denied (403): {message}")]
     AccessDenied {
+        /// Human-readable error message from the server.
         message: String,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// HTTP 404 — the requested resource does not exist.
     #[error("Not found (404): {message}")]
     NotFound {
+        /// Human-readable error message from the server.
         message: String,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// HTTP 405 — the HTTP method is not supported on this endpoint.
     #[error("Method not allowed (405): {message}")]
     MethodNotAllowed {
+        /// Human-readable error message from the server.
         message: String,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// HTTP 409 — a conflicting resource already exists.
     #[error("Conflict (409): {message}")]
     Conflict {
+        /// Human-readable error message from the server.
         message: String,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// HTTP 412 — a precondition (e.g. `If-Match`) was not met.
     #[error("Precondition failed (412): {message}")]
     PreconditionFailed {
+        /// Human-readable error message from the server.
         message: String,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// HTTP 429 — too many requests; the retry policy may handle this automatically.
     #[error("Rate limited (429): retry after {retry_after:?}")]
     RateLimited {
+        /// Server-suggested delay parsed from the `Retry-After` header.
         retry_after: Option<Duration>,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// HTTP 503 — the service is temporarily unavailable.
     #[error("Service unavailable (503): {message}")]
     ServiceUnavailable {
+        /// Human-readable error message from the server.
         message: String,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// Other 5xx server errors.
     #[error("Server error ({status}): {message}")]
     ServerError {
+        /// The HTTP status code.
         status: u16,
+        /// Human-readable error message from the server.
         message: String,
+        /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
 
+    /// A network-level transport error (DNS, TLS, timeout, …).
     #[error("HTTP transport error: {0}")]
     Transport(#[from] reqwest::Error),
 
+    /// Failed to serialize a request body or deserialize a response body.
     #[error("JSON serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    /// Invalid [`ClientConfig`](crate::ClientConfig) values.
     #[error("Invalid configuration: {0}")]
     Config(String),
 
+    /// A URL could not be parsed.
     #[error("URL parse error: {0}")]
     UrlParse(#[from] url::ParseError),
 }

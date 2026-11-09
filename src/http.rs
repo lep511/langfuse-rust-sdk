@@ -1,3 +1,5 @@
+//! Low-level HTTP transport shared by all API clients.
+
 use std::time::Duration;
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -26,6 +28,8 @@ pub(crate) fn encode_path_segment(segment: &str) -> String {
     utf8_percent_encode(segment, PATH_SEGMENT).to_string()
 }
 
+/// Thin wrapper around [`reqwest::Client`] that adds authentication,
+/// default headers, and a retry loop to every request.
 pub struct HttpClient {
     client: Client,
     base_url: Url,
@@ -35,6 +39,7 @@ pub struct HttpClient {
 }
 
 impl HttpClient {
+    /// Build a new HTTP client from resolved configuration.
     pub fn new(config: ClientConfig) -> Result<Self, LangfuseError> {
         let client = Client::builder()
             .timeout(config.timeout)
@@ -50,11 +55,13 @@ impl HttpClient {
         })
     }
 
+    /// Send a GET request and deserialize the JSON response.
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, LangfuseError> {
         self.request(Method::GET, path, None::<&()>, None::<&()>, None)
             .await
     }
 
+    /// Send a GET request with query parameters and deserialize the JSON response.
     pub async fn get_with_query<T: DeserializeOwned, Q: Serialize>(
         &self,
         path: &str,
@@ -64,6 +71,7 @@ impl HttpClient {
             .await
     }
 
+    /// Send a POST request with a JSON body and deserialize the JSON response.
     pub async fn post<T: DeserializeOwned, B: Serialize>(
         &self,
         path: &str,
@@ -73,6 +81,7 @@ impl HttpClient {
             .await
     }
 
+    /// Send a POST request with a JSON body; the response body is ignored.
     pub async fn post_no_response<B: Serialize>(
         &self,
         path: &str,
@@ -93,6 +102,7 @@ impl HttpClient {
             .await
     }
 
+    /// Send a PUT request with a JSON body and deserialize the JSON response.
     pub async fn put<T: DeserializeOwned, B: Serialize>(
         &self,
         path: &str,
@@ -102,6 +112,7 @@ impl HttpClient {
             .await
     }
 
+    /// Send a PATCH request with a JSON body and deserialize the JSON response.
     pub async fn patch<T: DeserializeOwned, B: Serialize>(
         &self,
         path: &str,
@@ -111,6 +122,7 @@ impl HttpClient {
             .await
     }
 
+    /// Send a PATCH request with a JSON body; the response body is ignored.
     pub async fn patch_no_content<B: Serialize>(
         &self,
         path: &str,
@@ -120,11 +132,13 @@ impl HttpClient {
             .await
     }
 
+    /// Send a DELETE request without a body; the response body is ignored.
     pub async fn delete_no_content(&self, path: &str) -> Result<(), LangfuseError> {
         self.request_no_content(Method::DELETE, path, None::<&()>, None::<&()>, None)
             .await
     }
 
+    /// Send a DELETE request with query parameters; the response body is ignored.
     pub async fn delete_no_content_with_query<Q: Serialize>(
         &self,
         path: &str,

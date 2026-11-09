@@ -1,11 +1,39 @@
+//! Async Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
+//!
+//! Built on `reqwest` + `tokio`, the SDK exposes one sub-client per API
+//! resource group through [`LangfuseClient`].  All sub-clients share a
+//! single connection pool, authentication header and retry policy.
+//!
+//! # Quick start
+//!
+//! ```rust,no_run
+//! use langfuse_sdk::{ClientConfig, LangfuseClient};
+//!
+//! # async fn run() -> Result<(), langfuse_sdk::LangfuseError> {
+//! let config = ClientConfig::builder("pk-lf-…", "sk-lf-…")
+//!     .base_url("https://cloud.langfuse.com")
+//!     .build()?;
+//! let client = LangfuseClient::new(config)?;
+//! let health = client.health.check().await?;
+//! # Ok(())
+//! # }
+//! ```
 #![warn(missing_docs)]
+/// API client modules — one per resource group.
 pub mod api;
+/// SDK configuration and builder.
 pub mod config;
+/// Error types returned by every SDK method.
 pub mod error;
+/// Low-level HTTP transport shared by all API clients.
 pub mod http;
+/// Request and response model structs generated from the OpenAPI spec.
 pub mod models;
+/// Pagination helpers for list endpoints.
 pub mod pagination;
+/// Retry policy with exponential backoff and jitter.
 pub mod retry;
+/// Standalone utilities (YAML processing).
 pub mod tools;
 
 pub use config::{ClientConfig, ConfigBuilder};
@@ -52,40 +80,69 @@ use crate::http::HttpClient;
 /// one HTTP client (connection pool, auth, retries).
 #[non_exhaustive]
 pub struct LangfuseClient {
+    /// Health-check endpoint.
     pub health: HealthClient,
+    /// Create, list, update and delete scores.
     pub scores: ScoresClient,
+    /// Manage score configuration presets.
     pub score_configs: ScoreConfigsClient,
+    /// Query observations (spans, generations, events).
     pub observations: ObservationsClient,
+    /// Create and manage datasets.
     pub datasets: DatasetsClient,
+    /// Create and manage dataset items.
     pub dataset_items: DatasetItemsClient,
+    /// Retrieve and manage prompts.
     pub prompts: PromptsClient,
+    /// Manage individual prompt versions.
     pub prompt_versions: PromptVersionClient,
+    /// CRUD operations on LLM model definitions.
     pub models: ModelsClient,
+    /// Manage skills.
     pub skills: SkillsClient,
+    /// Project-level operations.
     pub projects: ProjectsClient,
+    /// Create and query traces.
     pub traces: TracesClient,
+    /// Batch ingestion of traces, spans, generations, scores and events.
     pub ingestion: IngestionClient,
+    /// Upload and manage media assets.
     pub media: MediaClient,
+    /// Manage comments on traces and observations.
     pub comments: CommentsClient,
+    /// Submit end-user feedback.
     pub feedback: FeedbackClient,
+    /// Manage annotation queues and their items.
     pub annotation_queues: AnnotationQueuesClient,
+    /// Blob storage integration configuration.
     pub blob_storage_integrations: BlobStorageIntegrationsClient,
+    /// Manage automated evaluation rules.
     pub evaluation_rules: EvaluationRulesClient,
+    /// Manage evaluator definitions.
     pub evaluators: EvaluatorsClient,
+    /// Manage experiments and their runs.
     pub experiments: ExperimentsClient,
+    /// Manage LLM provider connections.
     pub llm_connections: LlmConnectionsClient,
+    /// Query aggregated metrics.
     pub metrics: MetricsClient,
+    /// Organization-level operations.
     pub organizations: OrganizationsClient,
+    /// SCIM 2.0 user provisioning.
     pub scim: ScimClient,
+    /// *(unstable)* Dashboard widget queries.
     #[cfg(feature = "unstable")]
     pub unstable_dashboard_widgets: UnstableDashboardWidgetsClient,
+    /// *(unstable)* Dashboard CRUD.
     #[cfg(feature = "unstable")]
     pub unstable_dashboards: UnstableDashboardsClient,
+    /// *(unstable)* Topic management.
     #[cfg(feature = "unstable")]
     pub unstable_topics: UnstableTopicsClient,
 }
 
 impl LangfuseClient {
+    /// Create a new client from the given configuration.
     pub fn new(config: ClientConfig) -> Result<Self, LangfuseError> {
         let http = Arc::new(HttpClient::new(config)?);
         Ok(Self {

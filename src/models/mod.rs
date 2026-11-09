@@ -1,3 +1,9 @@
+//! Request and response model structs derived from the Langfuse OpenAPI spec.
+//!
+//! Field names mirror the JSON wire format (via `serde(rename_all = "camelCase")`).
+//! Optional or nullable spec fields are represented as `Option<T>`.
+#![allow(missing_docs)]
+
 #[macro_use]
 mod macros;
 

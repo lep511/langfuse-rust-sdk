@@ -1,3 +1,5 @@
+//! SDK configuration and builder.
+
 use std::time::Duration;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -12,6 +14,9 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const SDK_NAME: &str = "rust";
 const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Resolved configuration consumed by [`LangfuseClient::new`](crate::LangfuseClient::new).
+///
+/// Construct one via [`ClientConfig::builder`].
 #[derive(Debug)]
 pub struct ClientConfig {
     pub(crate) base_url: Url,
@@ -24,6 +29,7 @@ pub struct ClientConfig {
 }
 
 impl ClientConfig {
+    /// Start building a configuration with the required API keys.
     pub fn builder(public_key: impl Into<String>, secret_key: impl Into<String>) -> ConfigBuilder {
         ConfigBuilder {
             public_key: public_key.into(),
@@ -35,15 +41,20 @@ impl ClientConfig {
         }
     }
 
+    /// The resolved base URL of the Langfuse API.
     pub fn base_url(&self) -> &Url {
         &self.base_url
     }
 
+    /// The HTTP request timeout.
     pub fn timeout(&self) -> Duration {
         self.timeout
     }
 }
 
+/// Builder for [`ClientConfig`].
+///
+/// Created via [`ClientConfig::builder`].
 pub struct ConfigBuilder {
     public_key: String,
     secret_key: String,
@@ -54,21 +65,25 @@ pub struct ConfigBuilder {
 }
 
 impl ConfigBuilder {
+    /// Override the Langfuse API base URL (default: `https://cloud.langfuse.com`).
     pub fn base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = Some(url.into());
         self
     }
 
+    /// Set the HTTP request timeout (default: 30 s).
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
 
+    /// Set a custom retry policy (default: 2 retries with exponential backoff).
     pub fn retry_policy(mut self, policy: RetryPolicy) -> Self {
         self.retry_policy = Some(policy);
         self
     }
 
+    /// Add an extra default header sent with every request.
     pub fn header(mut self, name: &str, value: &str) -> Self {
         if let (Ok(name), Ok(value)) = (
             name.parse::<reqwest::header::HeaderName>(),
@@ -79,6 +94,7 @@ impl ConfigBuilder {
         self
     }
 
+    /// Validate and build the final [`ClientConfig`].
     pub fn build(self) -> Result<ClientConfig, LangfuseError> {
         let raw_url = self.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL);
         let base_url = Url::parse(raw_url)

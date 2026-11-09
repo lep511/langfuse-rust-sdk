@@ -1,3 +1,5 @@
+//! Retry policy with exponential backoff and jitter.
+
 use std::time::Duration;
 
 use rand::Rng;
@@ -8,11 +10,23 @@ const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(60);
 const DEFAULT_MAX_RETRIES: u32 = 2;
 const DEFAULT_JITTER_FRACTION: f64 = 0.2;
 
+/// Configures how failed requests are retried.
+///
+/// Retryable HTTP statuses: 408 (Request Timeout), 429 (Too Many Requests),
+/// and 5xx. Status 409 (Conflict) is **not** retried because it signals a
+/// real conflict that a retry cannot fix.
+///
+/// The default policy retries up to 2 times with 1 s initial backoff, 60 s
+/// maximum backoff and 20 % jitter.
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
+    /// Base delay before the first retry (default: 1 s).
     pub initial_backoff: Duration,
+    /// Upper bound on the computed delay (default: 60 s).
     pub max_backoff: Duration,
+    /// Maximum number of retry attempts (default: 2).
     pub max_retries: u32,
+    /// Fraction of the delay added/subtracted as random jitter (default: 0.2).
     pub jitter_fraction: f64,
 }
 
@@ -39,6 +53,11 @@ impl RetryPolicy {
         matches!(status.as_u16(), 408 | 429 | 500..=599)
     }
 
+    /// Compute the delay before the next retry attempt.
+    ///
+    /// If `retry_after` is `Some`, the server's suggestion is used (clamped
+    /// to [`max_backoff`](Self::max_backoff)).  Otherwise the delay is
+    /// `initial_backoff * 2^attempt` with random jitter.
     pub fn delay(&self, attempt: u32, retry_after: Option<Duration>) -> Duration {
         if let Some(server_delay) = retry_after {
             return server_delay.min(self.max_backoff);
