@@ -61,9 +61,20 @@ most of them failed at runtime against the real API before.
   408, 429 and 5xx). A conflict now returns `LangfuseError::Conflict` immediately.
 - **Path parameters are percent-encoded**, so names with `/` (prompt folders) or
   spaces reach the right route. Callers that pre-encoded names must stop doing so.
+- **`YamlTool`**: `Value` and `YamlError::Parse` now come from `serde_norway`
+  instead of `serde_yml` (same API shape). YAML output differs in one way: strings
+  such as `yes`/`no`/`on`/`off` are no longer quoted; they still parse back as strings.
 - **Error variants**: `LangfuseError` is
   `#[non_exhaustive]` with new `Conflict` (409), `PreconditionFailed` (412) and
   `ServiceUnavailable` (503) variants; 503 is no longer `ServerError`.
+
+### Security
+
+- Replaced `serde_yml` 0.0.12 with `serde_norway` 0.9 (a maintained fork of `serde_yaml`).
+  `serde_yml` and its `libyml` dependency are unsound and unmaintained
+  ([RUSTSEC-2025-0068](https://rustsec.org/advisories/RUSTSEC-2025-0068),
+  [RUSTSEC-2025-0067](https://rustsec.org/advisories/RUSTSEC-2025-0067)).
+  `cargo audit` now reports no advisories.
 
 ### Added
 

@@ -3,14 +3,14 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_yml::Value;
+use serde_norway::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum YamlError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("YAML parse error: {0}")]
-    Parse(#[from] serde_yml::Error),
+    Parse(#[from] serde_norway::Error),
     #[error("Field not found: {0}")]
     FieldNotFound(String),
 }
@@ -29,13 +29,13 @@ impl YamlTool {
     /// ```
     pub fn read_file<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T, YamlError> {
         let contents = fs::read_to_string(path)?;
-        Ok(serde_yml::from_str(&contents)?)
+        Ok(serde_norway::from_str(&contents)?)
     }
 
     /// Deserialize a YAML string into a typed struct.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str<T: DeserializeOwned>(yaml: &str) -> Result<T, YamlError> {
-        Ok(serde_yml::from_str(yaml)?)
+        Ok(serde_norway::from_str(yaml)?)
     }
 
     /// Read a YAML file into a dynamic `Value` (arbitrary structure).
@@ -44,24 +44,24 @@ impl YamlTool {
     /// before deciding how to handle them.
     pub fn read_value(path: impl AsRef<Path>) -> Result<Value, YamlError> {
         let contents = fs::read_to_string(path)?;
-        Ok(serde_yml::from_str(&contents)?)
+        Ok(serde_norway::from_str(&contents)?)
     }
 
     /// Parse a YAML string into a dynamic `Value`.
     pub fn parse_value(yaml: &str) -> Result<Value, YamlError> {
-        Ok(serde_yml::from_str(yaml)?)
+        Ok(serde_norway::from_str(yaml)?)
     }
 
     // ── Write ───────────────────────────────────────────────────────
 
     /// Serialize a value to a YAML string.
     pub fn to_string<T: Serialize>(data: &T) -> Result<String, YamlError> {
-        Ok(serde_yml::to_string(data)?)
+        Ok(serde_norway::to_string(data)?)
     }
 
     /// Serialize a value and write it to a YAML file.
     pub fn write_file<T: Serialize>(path: impl AsRef<Path>, data: &T) -> Result<(), YamlError> {
-        let yaml = serde_yml::to_string(data)?;
+        let yaml = serde_norway::to_string(data)?;
         fs::write(path, yaml)?;
         Ok(())
     }
@@ -124,7 +124,7 @@ impl YamlTool {
     /// Check whether a string is valid YAML. Returns `Ok(())` on success
     /// or the parse error on failure.
     pub fn validate(yaml: &str) -> Result<(), YamlError> {
-        let _: Value = serde_yml::from_str(yaml)?;
+        let _: Value = serde_norway::from_str(yaml)?;
         Ok(())
     }
 
@@ -132,14 +132,14 @@ impl YamlTool {
 
     /// Convert a `serde_json::Value` to a YAML `Value`.
     pub fn from_json(json: &serde_json::Value) -> Result<Value, YamlError> {
-        let yaml_str = serde_yml::to_string(json)?;
-        Ok(serde_yml::from_str(&yaml_str)?)
+        let yaml_str = serde_norway::to_string(json)?;
+        Ok(serde_norway::from_str(&yaml_str)?)
     }
 
     /// Convert a YAML `Value` to a `serde_json::Value`.
     pub fn to_json(yaml: &Value) -> Result<serde_json::Value, YamlError> {
-        let yaml_str = serde_yml::to_string(yaml)?;
-        let json: serde_json::Value = serde_yml::from_str(&yaml_str)?;
+        let yaml_str = serde_norway::to_string(yaml)?;
+        let json: serde_json::Value = serde_norway::from_str(&yaml_str)?;
         Ok(json)
     }
 
@@ -167,7 +167,7 @@ impl YamlTool {
         let body_start = end + 4; // skip "\n---"
         let body = after_first[body_start..].trim_start_matches('\n');
 
-        let value: Value = serde_yml::from_str(yaml_block)?;
+        let value: Value = serde_norway::from_str(yaml_block)?;
         Ok((value, body))
     }
 }

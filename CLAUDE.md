@@ -48,7 +48,7 @@ Tests never touch the network. HTTP behaviour is tested with `wiremock` in `test
 - JSON-in-query parameters (`filter`, metrics `query`) are `String`s (or typed and serialized with `serde_json::to_string`, as in `MetricsClient::query`). `ListObservationsParams` serializes as key/value pairs so `environment` can repeat.
 - Shared types: `evaluation_common.rs` (evaluators + evaluation rules: `Creator`, variable mappings, `PublicApiError`, `EvaluationRuleReadFilter`), `unstable_common.rs` (`UnstablePublicApiError`, `DashboardWidgetFilter`).
 
-**Tools** (`src/tools/`): `YamlTool` — standalone YAML utility (read/write/merge/validate/frontmatter extraction) using `serde_yml`. Not part of the API client.
+**Tools** (`src/tools/`): `YamlTool` — standalone YAML utility (read/write/merge/validate/frontmatter extraction) using `serde_norway` (maintained `serde_yaml` fork; `serde_yml` was dropped for RUSTSEC-2025-0068). Not part of the API client.
 
 ## Conventions
 
