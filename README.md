@@ -1,4 +1,4 @@
-# langfuse-sdk
+# langfuse-rust-sdk
 
 Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 

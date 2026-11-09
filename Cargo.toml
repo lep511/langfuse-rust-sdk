@@ -1,12 +1,12 @@
 [package]
-name = "langfuse-sdk"
+name = "langfuse-rust-sdk"
 version = "0.2.0"
 edition = "2024"
 description = "Rust SDK for the Langfuse LLM observability API"
 license = "MIT"
 repository = "https://github.com/lep511/langfuse-rust-sdk"
 homepage = "https://github.com/lep511/langfuse-rust-sdk"
-documentation = "https://docs.rs/mongodb-voyageai"
+#documentation = ""
 readme = "README.md"
 keywords = ["langfuse", "llm", "observability", "tracing", "sdk"]
 categories = ["api-bindings", "development-tools"]
