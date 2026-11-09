@@ -4,6 +4,20 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.2.1] - 2026-11-09
+
+### Added
+
+- Comprehensive documentation for all public items in the core modules (`lib`,
+  `config`, `error`, `http`, `pagination`, `retry`, `tools`), including a
+  crate-level doc comment with a quick-start example.
+
+### Fixed
+
+- Eliminated all 1,599 `missing_docs` compiler warnings. The `api` and `models`
+  modules now use `#![allow(missing_docs)]` since their OpenAPI-derived types
+  have self-documenting field names.
+
 ## [0.2.0] - 2026-11-09
 
 The SDK now covers all 120 operations of `openapi.yml` (99 stable, 21 behind the
