@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_yml::Value;
 
 #[derive(Debug, thiserror::Error)]
@@ -33,6 +33,7 @@ impl YamlTool {
     }
 
     /// Deserialize a YAML string into a typed struct.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str<T: DeserializeOwned>(yaml: &str) -> Result<T, YamlError> {
         Ok(serde_yml::from_str(yaml)?)
     }
@@ -59,10 +60,7 @@ impl YamlTool {
     }
 
     /// Serialize a value and write it to a YAML file.
-    pub fn write_file<T: Serialize>(
-        path: impl AsRef<Path>,
-        data: &T,
-    ) -> Result<(), YamlError> {
+    pub fn write_file<T: Serialize>(path: impl AsRef<Path>, data: &T) -> Result<(), YamlError> {
         let yaml = serde_yml::to_string(data)?;
         fs::write(path, yaml)?;
         Ok(())
@@ -253,14 +251,11 @@ mod tests {
 
     #[test]
     fn deep_merge() {
-        let mut base = YamlTool::parse_value(
-            "server:\n  host: localhost\n  port: 3000\ndb: postgres\n",
-        )
-        .unwrap();
-        let overlay = YamlTool::parse_value(
-            "server:\n  port: 8080\n  tls: true\nredis: enabled\n",
-        )
-        .unwrap();
+        let mut base =
+            YamlTool::parse_value("server:\n  host: localhost\n  port: 3000\ndb: postgres\n")
+                .unwrap();
+        let overlay =
+            YamlTool::parse_value("server:\n  port: 8080\n  tls: true\nredis: enabled\n").unwrap();
 
         YamlTool::merge(&mut base, &overlay);
 
@@ -278,12 +273,11 @@ mod tests {
                 .unwrap(),
             8080
         );
-        assert_eq!(
+        assert!(
             YamlTool::get_field(&base, "server.tls")
                 .unwrap()
                 .as_bool()
-                .unwrap(),
-            true
+                .unwrap()
         );
         assert_eq!(base["db"].as_str().unwrap(), "postgres");
         assert_eq!(base["redis"].as_str().unwrap(), "enabled");

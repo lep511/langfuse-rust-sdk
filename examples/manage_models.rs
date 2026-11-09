@@ -16,8 +16,7 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
         std::env::var("LANGFUSE_SECRET_KEY")?,
     )
     .base_url(
-        std::env::var("LANGFUSE_BASE_URL")
-            .unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
+        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
     )
     .build()?;
     Ok(LangfuseClient::new(config)?)
@@ -32,13 +31,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = client
         .models
         .create(&CreateModelRequest {
-            model_name: "my-fine-tuned-llm".into(),
-            match_pattern: "(?i)^my-fine-tuned-llm.*$".into(),
-            unit: ModelUsageUnit::Tokens,
-            start_date: None,
             input_price: Some(0.003),
             output_price: Some(0.012),
-            total_price: None,
+            ..CreateModelRequest::new(
+                "my-fine-tuned-llm",
+                "(?i)^my-fine-tuned-llm.*$",
+                ModelUsageUnit::Tokens,
+            )
         })
         .await?;
     println!("Registered model: {} ({})", model.model_name, model.id);
@@ -61,12 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         models.meta.total_items
     );
     for m in &models.data {
-        println!(
-            "  - {} ({:?}) — {}",
-            m.model_name,
-            m.unit,
-            m.id
-        );
+        println!("  - {} ({:?}) — {}", m.model_name, m.unit, m.id);
     }
 
     // Clean up: delete the model we created

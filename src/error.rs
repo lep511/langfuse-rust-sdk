@@ -79,6 +79,28 @@ pub enum LangfuseError {
     UrlParse(#[from] url::ParseError),
 }
 
+impl LangfuseError {
+    /// The parsed JSON body of an HTTP error response, if the server sent one.
+    pub fn body(&self) -> Option<&serde_json::Value> {
+        match self {
+            LangfuseError::BadRequest { body, .. }
+            | LangfuseError::Unauthorized { body, .. }
+            | LangfuseError::AccessDenied { body, .. }
+            | LangfuseError::NotFound { body, .. }
+            | LangfuseError::MethodNotAllowed { body, .. }
+            | LangfuseError::Conflict { body, .. }
+            | LangfuseError::PreconditionFailed { body, .. }
+            | LangfuseError::RateLimited { body, .. }
+            | LangfuseError::ServiceUnavailable { body, .. }
+            | LangfuseError::ServerError { body, .. } => body.as_ref(),
+            LangfuseError::Transport(_)
+            | LangfuseError::Serialization(_)
+            | LangfuseError::Config(_)
+            | LangfuseError::UrlParse(_) => None,
+        }
+    }
+}
+
 pub(crate) fn map_response_error(
     status: StatusCode,
     body_bytes: &[u8],

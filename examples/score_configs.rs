@@ -16,8 +16,7 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
         std::env::var("LANGFUSE_SECRET_KEY")?,
     )
     .base_url(
-        std::env::var("LANGFUSE_BASE_URL")
-            .unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
+        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
     )
     .build()?;
     Ok(LangfuseClient::new(config)?)
@@ -40,7 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             categories: None,
         })
         .await?;
-    println!("Created numeric config: {} ({})", numeric_config.name, numeric_config.id);
+    println!(
+        "Created numeric config: {} ({})",
+        numeric_config.name, numeric_config.id
+    );
     println!(
         "  Range: [{}, {}]",
         numeric_config.min_value.unwrap_or(0.0),
@@ -54,10 +56,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: "response-quality".into(),
             data_type: ScoreConfigDataType::Categorical,
             categories: Some(vec![
-                CreateConfigCategory { value: 3.0, label: "excellent".into() },
-                CreateConfigCategory { value: 2.0, label: "good".into() },
-                CreateConfigCategory { value: 1.0, label: "acceptable".into() },
-                CreateConfigCategory { value: 0.0, label: "poor".into() },
+                CreateConfigCategory {
+                    value: 3.0,
+                    label: "excellent".into(),
+                },
+                CreateConfigCategory {
+                    value: 2.0,
+                    label: "good".into(),
+                },
+                CreateConfigCategory {
+                    value: 1.0,
+                    label: "acceptable".into(),
+                },
+                CreateConfigCategory {
+                    value: 0.0,
+                    label: "poor".into(),
+                },
             ]),
             min_value: None,
             max_value: None,
@@ -86,10 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let archived = if cfg.is_archived { " [archived]" } else { "" };
         println!(
             "  - {} ({:?}){} — {}",
-            cfg.name,
-            cfg.data_type,
-            archived,
-            cfg.id
+            cfg.name, cfg.data_type, archived, cfg.id
         );
     }
 

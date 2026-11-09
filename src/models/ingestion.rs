@@ -31,6 +31,8 @@ pub struct OtelScopeSpan {
 pub struct OtelInstrumentationScope {
     pub name: Option<String>,
     pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<Vec<OtelKeyValue>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,6 +42,9 @@ pub struct OtelSpan {
     pub span_id: String,
     pub parent_span_id: Option<String>,
     pub name: String,
+    /// OTLP span kind (0 unspecified, 1 internal, 2 server, 3 client, 4 producer, 5 consumer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<i64>,
     pub start_time_unix_nano: String,
     pub end_time_unix_nano: String,
     pub attributes: Option<Vec<OtelKeyValue>>,

@@ -15,8 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("LANGFUSE_SECRET_KEY")?,
     )
     .base_url(
-        std::env::var("LANGFUSE_BASE_URL")
-            .unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
+        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
     )
     .build()?;
 

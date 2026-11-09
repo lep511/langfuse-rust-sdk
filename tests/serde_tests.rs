@@ -128,23 +128,49 @@ fn prompt_type_all_variants() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  ScoreV3 tagged union — all five variants
+//  Enums — unknown values fall back to `Unknown`
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Asserts that an unrecognised wire value deserializes to `unknown`
+/// and that serializing `unknown` is rejected.
+pub fn assert_unknown_fallback<T>(unknown: T)
+where
+    T: serde::de::DeserializeOwned + serde::Serialize + PartialEq + std::fmt::Debug,
+{
+    let parsed: T = serde_json::from_str(r#""SOME_FUTURE_VALUE""#).unwrap();
+    assert_eq!(parsed, unknown);
+    assert!(serde_json::to_string(&unknown).is_err());
+}
+
+#[test]
+fn existing_enums_fall_back_to_unknown() {
+    assert_unknown_fallback(ModelUsageUnit::Unknown);
+    assert_unknown_fallback(ObservationLevel::Unknown);
+    assert_unknown_fallback(DatasetStatus::Unknown);
+    assert_unknown_fallback(ScoreSource::Unknown);
+    assert_unknown_fallback(ScoreDataType::Unknown);
+    assert_unknown_fallback(ScoreConfigDataType::Unknown);
+    assert_unknown_fallback(PromptType::Unknown);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ScoreV3 tagged union — all five variants (spec BaseScoreV3 / ScoreV3)
 // ═══════════════════════════════════════════════════════════════════════
 
 fn score_base_json(extra: &str) -> String {
     format!(
         r#"{{
             "id": "score-001",
+            "projectId": "proj-1",
             "name": "my-score",
             "source": "API",
             "timestamp": "2024-06-15T10:30:00Z",
             "createdAt": "2024-06-15T10:30:00Z",
             "updatedAt": "2024-06-15T10:31:00Z",
             "environment": "production",
-            "traceId": "trace-abc",
-            "observationId": null,
             "comment": "looks good",
             "metadata": {{"reviewer": "alice"}},
+            "subject": {{"kind": "trace", "id": "trace-abc"}},
             {extra}
         }}"#
     )
@@ -157,104 +183,64 @@ fn score_v3_numeric() {
     match &score {
         ScoreV3::Numeric { base, value } => {
             assert_eq!(base.id, "score-001");
+            assert_eq!(base.project_id, "proj-1");
             assert_eq!(base.name, "my-score");
             assert_eq!(base.source, ScoreSource::Api);
-            assert_eq!(base.trace_id.as_deref(), Some("trace-abc"));
-            assert!(base.observation_id.is_none());
+            assert_eq!(base.environment, "production");
             assert_eq!(base.comment.as_deref(), Some("looks good"));
             assert!(base.metadata.is_some());
+            assert!(matches!(
+                &base.subject,
+                Some(ScoreSubjectV3::Trace { id }) if id == "trace-abc"
+            ));
             assert!((value - 0.95).abs() < f64::EPSILON);
         }
         other => panic!("Expected Numeric, got {other:?}"),
     }
+    assert_eq!(score.base().id, "score-001");
 }
 
 #[test]
-fn score_v3_boolean() {
-    let json =
-        score_base_json(r#""dataType": "BOOLEAN", "value": 1.0, "stringValue": "true""#);
+fn score_v3_boolean_value_is_bool() {
+    let json = score_base_json(r#""dataType": "BOOLEAN", "value": true"#);
     let score: ScoreV3 = serde_json::from_str(&json).unwrap();
     match &score {
-        ScoreV3::Boolean {
-            base,
-            value,
-            string_value,
-        } => {
+        ScoreV3::Boolean { base, value } => {
             assert_eq!(base.id, "score-001");
-            assert!((value - 1.0).abs() < f64::EPSILON);
-            assert_eq!(string_value, "true");
+            assert!(*value);
         }
         other => panic!("Expected Boolean, got {other:?}"),
     }
 }
 
 #[test]
-fn score_v3_categorical() {
-    let json = score_base_json(
-        r#""dataType": "CATEGORICAL", "value": 2.0, "stringValue": "positive""#,
-    );
+fn score_v3_categorical_value_is_string() {
+    let json = score_base_json(r#""dataType": "CATEGORICAL", "value": "positive""#);
     let score: ScoreV3 = serde_json::from_str(&json).unwrap();
     match &score {
-        ScoreV3::Categorical {
-            value,
-            string_value,
-            ..
-        } => {
-            assert!((value.unwrap() - 2.0).abs() < f64::EPSILON);
-            assert_eq!(string_value, "positive");
-        }
+        ScoreV3::Categorical { value, .. } => assert_eq!(value, "positive"),
         other => panic!("Expected Categorical, got {other:?}"),
     }
 }
 
 #[test]
-fn score_v3_categorical_null_value() {
-    let json = score_base_json(
-        r#""dataType": "CATEGORICAL", "value": null, "stringValue": "neutral""#,
-    );
+fn score_v3_correction_value_is_string() {
+    let json = score_base_json(r#""dataType": "CORRECTION", "value": "fixed answer""#);
     let score: ScoreV3 = serde_json::from_str(&json).unwrap();
     match &score {
-        ScoreV3::Categorical {
-            value,
-            string_value,
-            ..
-        } => {
-            assert!(value.is_none());
-            assert_eq!(string_value, "neutral");
-        }
-        other => panic!("Expected Categorical, got {other:?}"),
-    }
-}
-
-#[test]
-fn score_v3_correction() {
-    let json = score_base_json(
-        r#""dataType": "CORRECTION", "value": null, "stringValue": "fixed answer""#,
-    );
-    let score: ScoreV3 = serde_json::from_str(&json).unwrap();
-    match &score {
-        ScoreV3::Correction {
-            value,
-            string_value,
-            ..
-        } => {
-            assert!(value.is_none());
-            assert_eq!(string_value, "fixed answer");
-        }
+        ScoreV3::Correction { value, .. } => assert_eq!(value, "fixed answer"),
         other => panic!("Expected Correction, got {other:?}"),
     }
 }
 
 #[test]
-fn score_v3_text() {
-    let json = score_base_json(r#""dataType": "TEXT", "stringValue": "Great response!""#);
+fn score_v3_text_value_is_string() {
+    let json = score_base_json(r#""dataType": "TEXT", "value": "Great response!""#);
     let score: ScoreV3 = serde_json::from_str(&json).unwrap();
     match &score {
-        ScoreV3::Text {
-            base, string_value, ..
-        } => {
+        ScoreV3::Text { base, value } => {
             assert_eq!(base.environment, "production");
-            assert_eq!(string_value, "Great response!");
+            assert_eq!(value, "Great response!");
         }
         other => panic!("Expected Text, got {other:?}"),
     }
@@ -264,6 +250,7 @@ fn score_v3_text() {
 fn score_v3_minimal_optional_fields() {
     let json = r#"{
         "id": "s-min",
+        "projectId": "p",
         "name": "minimal",
         "source": "EVAL",
         "dataType": "NUMERIC",
@@ -274,20 +261,13 @@ fn score_v3_minimal_optional_fields() {
         "value": 0.5
     }"#;
     let score: ScoreV3 = serde_json::from_str(json).unwrap();
-    match &score {
-        ScoreV3::Numeric { base, .. } => {
-            assert!(base.trace_id.is_none());
-            assert!(base.session_id.is_none());
-            assert!(base.observation_id.is_none());
-            assert!(base.dataset_run_id.is_none());
-            assert!(base.author_user_id.is_none());
-            assert!(base.comment.is_none());
-            assert!(base.metadata.is_none());
-            assert!(base.config_id.is_none());
-            assert!(base.queue_id.is_none());
-        }
-        other => panic!("Expected Numeric, got {other:?}"),
-    }
+    let base = score.base();
+    assert!(base.comment.is_none());
+    assert!(base.config_id.is_none());
+    assert!(base.metadata.is_none());
+    assert!(base.author_user_id.is_none());
+    assert!(base.queue_id.is_none());
+    assert!(base.subject.is_none());
 }
 
 #[test]
@@ -295,6 +275,38 @@ fn score_v3_unknown_data_type_fails() {
     let json = score_base_json(r#""dataType": "UNKNOWN_TYPE", "value": 1.0"#);
     let result = serde_json::from_str::<ScoreV3>(&json);
     assert!(result.is_err());
+}
+
+#[test]
+fn score_v3_boolean_rejects_numeric_value() {
+    let json = score_base_json(r#""dataType": "BOOLEAN", "value": 1.0"#);
+    assert!(serde_json::from_str::<ScoreV3>(&json).is_err());
+}
+
+#[test]
+fn score_subject_all_kinds() {
+    let trace: ScoreSubjectV3 = serde_json::from_str(r#"{"kind":"trace","id":"t"}"#).unwrap();
+    assert!(matches!(trace, ScoreSubjectV3::Trace { ref id } if id == "t"));
+
+    let obs: ScoreSubjectV3 =
+        serde_json::from_str(r#"{"kind":"observation","id":"o","traceId":"t"}"#).unwrap();
+    assert!(
+        matches!(obs, ScoreSubjectV3::Observation { ref id, ref trace_id }
+        if id == "o" && trace_id.as_deref() == Some("t"))
+    );
+
+    let obs_no_trace: ScoreSubjectV3 =
+        serde_json::from_str(r#"{"kind":"observation","id":"o","traceId":null}"#).unwrap();
+    assert!(matches!(
+        obs_no_trace,
+        ScoreSubjectV3::Observation { trace_id: None, .. }
+    ));
+
+    let session: ScoreSubjectV3 = serde_json::from_str(r#"{"kind":"session","id":"s"}"#).unwrap();
+    assert!(matches!(session, ScoreSubjectV3::Session { ref id } if id == "s"));
+
+    let exp: ScoreSubjectV3 = serde_json::from_str(r#"{"kind":"experiment","id":"e"}"#).unwrap();
+    assert!(matches!(exp, ScoreSubjectV3::Experiment { ref id } if id == "e"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -339,37 +351,14 @@ fn create_score_value_deserialize_string() {
 
 #[test]
 fn create_score_request_minimal() {
-    let req = CreateScoreRequest {
-        name: "accuracy".into(),
-        value: CreateScoreValue::Numeric(0.9),
-        id: None,
-        trace_id: None,
-        session_id: None,
-        observation_id: None,
-        dataset_run_id: None,
-        comment: None,
-        metadata: None,
-        environment: None,
-        queue_id: None,
-        data_type: None,
-        config_id: None,
-    };
+    let req = CreateScoreRequest::new("accuracy", CreateScoreValue::Numeric(0.9));
     let json = serde_json::to_value(&req).unwrap();
-    assert_eq!(json["name"], "accuracy");
-    assert_eq!(json["value"], 0.9);
-    let obj = json.as_object().unwrap();
-    assert!(!obj.contains_key("id"));
-    assert!(!obj.contains_key("traceId"));
-    assert!(!obj.contains_key("sessionId"));
-    assert!(!obj.contains_key("comment"));
-    assert!(!obj.contains_key("dataType"));
+    assert_eq!(json, serde_json::json!({"name": "accuracy", "value": 0.9}));
 }
 
 #[test]
 fn create_score_request_full() {
     let req = CreateScoreRequest {
-        name: "sentiment".into(),
-        value: CreateScoreValue::String("positive".into()),
         id: Some("custom-id".into()),
         trace_id: Some("t1".into()),
         session_id: Some("sess-1".into()),
@@ -381,6 +370,9 @@ fn create_score_request_full() {
         queue_id: Some("q1".into()),
         data_type: Some(ScoreDataType::Categorical),
         config_id: Some("cfg-1".into()),
+        source: Some(CreateScoreSource::Annotation),
+        timestamp: Some("2024-06-15T10:30:00Z".parse().unwrap()),
+        ..CreateScoreRequest::new("sentiment", CreateScoreValue::String("positive".into()))
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(json["id"], "custom-id");
@@ -394,7 +386,40 @@ fn create_score_request_full() {
     assert_eq!(json["queueId"], "q1");
     assert_eq!(json["dataType"], "CATEGORICAL");
     assert_eq!(json["configId"], "cfg-1");
+    assert_eq!(json["source"], "ANNOTATION");
+    assert_eq!(json["timestamp"], "2024-06-15T10:30:00Z");
     assert_eq!(json["value"], "positive");
+}
+
+#[test]
+fn create_score_source_values() {
+    assert_eq!(serde_json::to_value(CreateScoreSource::Api).unwrap(), "API");
+    assert_eq!(
+        serde_json::to_value(CreateScoreSource::Annotation).unwrap(),
+        "ANNOTATION"
+    );
+}
+
+#[test]
+fn create_scores_response_accepted() {
+    let r: CreateScoresResponse = serde_json::from_str(r#"{"message":"Accepted"}"#).unwrap();
+    assert!(matches!(r, CreateScoresResponse::Accepted(ref a) if a.message == "Accepted"));
+}
+
+#[test]
+fn create_scores_response_batch_results() {
+    let r: CreateScoresResponse = serde_json::from_str(
+        r#"{"accepted":1,"rejected":1,"errors":[{"message":"invalid value"}]}"#,
+    )
+    .unwrap();
+    match r {
+        CreateScoresResponse::BatchResults(res) => {
+            assert_eq!(res.accepted, 1);
+            assert_eq!(res.rejected, 1);
+            assert_eq!(res.errors[0].message, "invalid value");
+        }
+        other => panic!("expected batch results, got {other:?}"),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -421,7 +446,10 @@ fn text_prompt_full_fields() {
             assert_eq!(base.version, 5);
             assert_eq!(base.labels, vec!["production", "v5"]);
             assert_eq!(base.tags, vec!["greeting", "en"]);
-            assert_eq!(base.commit_message.as_deref(), Some("Added greeting template"));
+            assert_eq!(
+                base.commit_message.as_deref(),
+                Some("Added greeting template")
+            );
             assert!(base.resolution_graph.is_some());
             assert!(base.config.is_object());
             assert_eq!(prompt, "Hello {{name}}, welcome to {{place}}!");
@@ -450,14 +478,78 @@ fn chat_prompt_multiple_messages() {
     match &prompt {
         Prompt::Chat { prompt, .. } => {
             assert_eq!(prompt.len(), 4);
-            assert_eq!(prompt[0].role, "system");
-            assert_eq!(prompt[1].role, "user");
-            assert_eq!(prompt[2].role, "assistant");
-            assert_eq!(prompt[2].content, "4");
-            assert_eq!(prompt[3].content, "And 3+3?");
+            let msgs: Vec<&ChatMessage> = prompt
+                .iter()
+                .map(|m| match m {
+                    ChatPromptMessage::Message(m) => m,
+                    other => panic!("expected message, got {other:?}"),
+                })
+                .collect();
+            assert_eq!(msgs[0].role, "system");
+            assert_eq!(msgs[1].role, "user");
+            assert_eq!(msgs[2].role, "assistant");
+            assert_eq!(msgs[2].content, "4");
+            assert_eq!(msgs[3].content, "And 3+3?");
         }
         _ => panic!("Expected Chat"),
     }
+}
+
+#[test]
+fn chat_prompt_with_placeholder_messages() {
+    let json = r#"{
+        "type": "chat",
+        "name": "with-history",
+        "version": 2,
+        "config": null,
+        "labels": [],
+        "tags": [],
+        "prompt": [
+            {"role": "system", "content": "Be helpful.", "type": "chatmessage"},
+            {"type": "placeholder", "name": "chat_history"}
+        ]
+    }"#;
+    let prompt: Prompt = serde_json::from_str(json).unwrap();
+    match &prompt {
+        Prompt::Chat { base, prompt } => {
+            assert!(base.config.is_null());
+            assert!(
+                matches!(&prompt[0], ChatPromptMessage::Message(m) if m.content == "Be helpful.")
+            );
+            assert!(
+                matches!(&prompt[1], ChatPromptMessage::Placeholder(p) if p.name == "chat_history")
+            );
+        }
+        _ => panic!("Expected Chat"),
+    }
+}
+
+#[test]
+fn placeholder_message_serializes_type() {
+    let json = serde_json::to_value(ChatPromptMessage::placeholder("history")).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"type": "placeholder", "name": "history"})
+    );
+    let json = serde_json::to_value(ChatPromptMessage::message("user", "hi")).unwrap();
+    assert_eq!(json, serde_json::json!({"role": "user", "content": "hi"}));
+}
+
+#[test]
+fn prompt_meta_deserialize() {
+    let json = r#"{
+        "name": "greeter",
+        "type": "text",
+        "versions": [1, 4],
+        "labels": ["production"],
+        "tags": [],
+        "lastUpdatedAt": "2024-06-15T10:30:00Z",
+        "lastConfig": null
+    }"#;
+    let meta: langfuse_sdk::api::prompts::PromptMeta = serde_json::from_str(json).unwrap();
+    assert_eq!(meta.versions, vec![1, 4]);
+    assert_eq!(meta.r#type, PromptType::Text);
+    assert!(meta.last_config.is_null());
 }
 
 #[test]
@@ -482,12 +574,7 @@ fn chat_prompt_empty_messages() {
 fn serialize_create_chat_prompt() {
     let req = CreatePromptRequest::Chat {
         name: "bot".into(),
-        prompt: vec![
-            ChatMessage {
-                role: "system".into(),
-                content: "Be helpful".into(),
-            },
-        ],
+        prompt: vec![ChatPromptMessage::message("system", "Be helpful")],
         config: Some(serde_json::json!({"temperature": 0.7})),
         labels: None,
         tags: Some(vec!["v1".into()]),
@@ -869,21 +956,63 @@ fn model_deserialize() {
         "id": "model-1",
         "modelName": "gpt-4o",
         "matchPattern": "(?i)^(gpt-4o)$",
-        "startDate": "2024-05-01",
+        "startDate": "2024-05-01T00:00:00.000Z",
         "unit": "TOKENS",
         "inputPrice": 0.005,
         "outputPrice": 0.015,
-        "totalPrice": null
+        "totalPrice": null,
+        "tokenizerId": "openai",
+        "tokenizerConfig": {"tokensPerMessage": 3},
+        "isLangfuseManaged": true,
+        "createdAt": "2024-05-01T00:00:00Z",
+        "prices": {"input": {"price": 0.005}, "output": {"price": 0.015}},
+        "pricingTiers": [
+            {
+                "id": "tier-default", "name": "Standard", "isDefault": true, "priority": 0,
+                "conditions": [], "prices": {"input": 0.005, "output": 0.015}
+            },
+            {
+                "id": "tier-long", "name": "Long context", "isDefault": false, "priority": 1,
+                "conditions": [
+                    {"usageDetailPattern": "input", "operator": "gt", "value": 200000, "caseSensitive": false},
+                    {"source": "metadata", "key": "tier", "operator": "in", "values": ["priority"]}
+                ],
+                "prices": {"input": 0.01}
+            }
+        ]
     }"#;
     let m: Model = serde_json::from_str(json).unwrap();
     assert_eq!(m.id, "model-1");
     assert_eq!(m.model_name, "gpt-4o");
     assert_eq!(m.match_pattern, "(?i)^(gpt-4o)$");
-    assert_eq!(m.start_date.unwrap().to_string(), "2024-05-01");
+    assert_eq!(
+        m.start_date.unwrap().to_rfc3339(),
+        "2024-05-01T00:00:00+00:00"
+    );
     assert_eq!(m.unit, Some(ModelUsageUnit::Tokens));
     assert!((m.input_price.unwrap() - 0.005).abs() < f64::EPSILON);
     assert!((m.output_price.unwrap() - 0.015).abs() < f64::EPSILON);
     assert!(m.total_price.is_none());
+    assert_eq!(m.tokenizer_id.as_deref(), Some("openai"));
+    assert!(m.is_langfuse_managed);
+    assert!((m.prices["input"].price - 0.005).abs() < f64::EPSILON);
+    assert_eq!(m.pricing_tiers.len(), 2);
+    let long = &m.pricing_tiers[1];
+    assert_eq!(long.priority, 1);
+    match &long.conditions[0] {
+        PricingTierCondition::Usage(c) => {
+            assert_eq!(c.operator, PricingTierOperator::Gt);
+            assert!((c.value - 200000.0).abs() < f64::EPSILON);
+        }
+        other => panic!("expected usage condition, got {other:?}"),
+    }
+    match &long.conditions[1] {
+        PricingTierCondition::Attribute(c) => {
+            assert_eq!(c.source, PricingTierAttributeSource::Metadata);
+            assert_eq!(c.values, vec!["priority"]);
+        }
+        other => panic!("expected attribute condition, got {other:?}"),
+    }
 }
 
 #[test]
@@ -891,32 +1020,120 @@ fn model_minimal() {
     let json = r#"{
         "id": "model-2",
         "modelName": "custom-llm",
-        "matchPattern": "custom-.*"
+        "matchPattern": "custom-.*",
+        "startDate": null,
+        "inputPrice": null,
+        "outputPrice": null,
+        "totalPrice": null,
+        "tokenizerId": null,
+        "tokenizerConfig": null,
+        "isLangfuseManaged": false,
+        "createdAt": "2024-05-01T00:00:00Z",
+        "prices": {},
+        "pricingTiers": []
     }"#;
     let m: Model = serde_json::from_str(json).unwrap();
     assert!(m.start_date.is_none());
     assert!(m.unit.is_none());
     assert!(m.input_price.is_none());
+    assert!(m.pricing_tiers.is_empty());
 }
 
 #[test]
 fn serialize_create_model_request() {
     let req = CreateModelRequest {
-        model_name: "my-model".into(),
-        match_pattern: "my-model-.*".into(),
-        unit: ModelUsageUnit::Characters,
-        start_date: None,
         input_price: Some(0.01),
         output_price: Some(0.02),
-        total_price: None,
+        start_date: Some("2024-05-01T00:00:00Z".parse().unwrap()),
+        tokenizer_id: Some(ModelTokenizerId::Claude),
+        ..CreateModelRequest::new("my-model", "my-model-.*", ModelUsageUnit::Characters)
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(json["modelName"], "my-model");
     assert_eq!(json["matchPattern"], "my-model-.*");
     assert_eq!(json["unit"], "CHARACTERS");
-    assert!(!json.as_object().unwrap().contains_key("startDate"));
+    assert_eq!(json["startDate"], "2024-05-01T00:00:00Z");
+    assert_eq!(json["tokenizerId"], "claude");
     assert_eq!(json["inputPrice"], 0.01);
-    assert!(!json.as_object().unwrap().contains_key("totalPrice"));
+    let obj = json.as_object().unwrap();
+    assert!(!obj.contains_key("totalPrice"));
+    assert!(!obj.contains_key("pricingTiers"));
+    assert!(!obj.contains_key("tokenizerConfig"));
+}
+
+#[test]
+fn serialize_create_model_request_with_pricing_tiers() {
+    let req = CreateModelRequest {
+        pricing_tiers: Some(vec![
+            PricingTierInput {
+                name: "Standard".into(),
+                is_default: Some(true),
+                priority: 0,
+                conditions: vec![],
+                prices: [("input".to_string(), 1.0)].into_iter().collect(),
+            },
+            PricingTierInput {
+                name: "Large".into(),
+                is_default: None,
+                priority: 1,
+                conditions: vec![
+                    PricingTierConditionInput::Usage(PricingTierUsageConditionInput {
+                        usage_detail_pattern: "input".into(),
+                        operator: PricingTierOperator::Gte,
+                        value: 1000.0,
+                        case_sensitive: None,
+                    }),
+                    PricingTierConditionInput::Attribute(PricingTierAttributeCondition {
+                        source: PricingTierAttributeSource::ModelParameters,
+                        key: "service_tier".into(),
+                        values: vec!["priority".into()],
+                    }),
+                ],
+                prices: [("input".to_string(), 2.0)].into_iter().collect(),
+            },
+        ]),
+        ..CreateModelRequest::new("m", "m", ModelUsageUnit::Tokens)
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json["pricingTiers"],
+        serde_json::json!([
+            {"name": "Standard", "isDefault": true, "priority": 0, "conditions": [], "prices": {"input": 1.0}},
+            {"name": "Large", "priority": 1, "conditions": [
+                {"usageDetailPattern": "input", "operator": "gte", "value": 1000.0},
+                {"source": "model_parameters", "key": "service_tier", "operator": "in", "values": ["priority"]}
+            ], "prices": {"input": 2.0}}
+        ])
+    );
+}
+
+#[test]
+fn model_enums_values() {
+    for (op, wire) in [
+        (PricingTierOperator::Gt, "gt"),
+        (PricingTierOperator::Gte, "gte"),
+        (PricingTierOperator::Lt, "lt"),
+        (PricingTierOperator::Lte, "lte"),
+        (PricingTierOperator::Eq, "eq"),
+        (PricingTierOperator::Neq, "neq"),
+    ] {
+        assert_eq!(serde_json::to_value(op).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<PricingTierOperator>(wire.into()).unwrap(),
+            op
+        );
+    }
+    assert_unknown_fallback(PricingTierOperator::Unknown);
+    assert_unknown_fallback(PricingTierAttributeSource::Unknown);
+    assert_unknown_fallback(ModelTokenizerId::Unknown);
+    assert_eq!(
+        serde_json::to_value(ModelTokenizerId::Openai).unwrap(),
+        "openai"
+    );
+    assert_eq!(
+        serde_json::to_value(PricingTierAttributeSource::ModelParameters).unwrap(),
+        "model_parameters"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1007,31 +1224,33 @@ fn skill_version_no_optional_fields() {
 fn serialize_create_skill_version_request() {
     let req = CreateSkillVersionRequest {
         files: vec![
-            SkillVersionFileInput {
-                path: "SKILL.md".into(),
-                content: "# My Skill\nDo things well.".into(),
-            },
-            SkillVersionFileInput {
-                path: "refs/guide.md".into(),
-                content: "Guide content here".into(),
-            },
+            SkillVersionFileCreateInput::content("SKILL.md", "# My Skill\nDo things well."),
+            SkillVersionFileCreateInput::reference("refs/guide.md", "q1w2e3+/="),
         ],
         commit_message: Some("Initial version".into()),
     };
     let json = serde_json::to_value(&req).unwrap();
-    assert_eq!(json["files"].as_array().unwrap().len(), 2);
-    assert_eq!(json["files"][0]["path"], "SKILL.md");
-    assert_eq!(json["files"][1]["path"], "refs/guide.md");
-    assert_eq!(json["commitMessage"], "Initial version");
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "files": [
+                {"path": "SKILL.md", "content": "# My Skill\nDo things well."},
+                {"path": "refs/guide.md", "sha256Hash": "q1w2e3+/="}
+            ],
+            "commitMessage": "Initial version"
+        })
+    );
 }
 
 #[test]
 fn serialize_create_skill_version_no_commit_message() {
     let req = CreateSkillVersionRequest {
-        files: vec![SkillVersionFileInput {
-            path: "SKILL.md".into(),
-            content: "content".into(),
-        }],
+        files: vec![SkillVersionFileCreateInput::Content(
+            SkillVersionFileInput {
+                path: "SKILL.md".into(),
+                content: "content".into(),
+            },
+        )],
         commit_message: None,
     };
     let json = serde_json::to_value(&req).unwrap();
@@ -1113,6 +1332,110 @@ fn media_response_deserialize() {
     assert_eq!(m.url, "https://storage.example.com/media-1.png");
 }
 
+#[test]
+fn media_content_type_all_variants() {
+    let cases = [
+        (MediaContentType::ImagePng, "image/png"),
+        (MediaContentType::ImageJpeg, "image/jpeg"),
+        (MediaContentType::ImageJpg, "image/jpg"),
+        (MediaContentType::ImageWebp, "image/webp"),
+        (MediaContentType::ImageGif, "image/gif"),
+        (MediaContentType::ImageSvgXml, "image/svg+xml"),
+        (MediaContentType::ImageTiff, "image/tiff"),
+        (MediaContentType::ImageBmp, "image/bmp"),
+        (MediaContentType::ImageAvif, "image/avif"),
+        (MediaContentType::ImageHeic, "image/heic"),
+        (MediaContentType::AudioMpeg, "audio/mpeg"),
+        (MediaContentType::AudioMp3, "audio/mp3"),
+        (MediaContentType::AudioWav, "audio/wav"),
+        (MediaContentType::AudioOgg, "audio/ogg"),
+        (MediaContentType::AudioOga, "audio/oga"),
+        (MediaContentType::AudioAac, "audio/aac"),
+        (MediaContentType::AudioMp4, "audio/mp4"),
+        (MediaContentType::AudioFlac, "audio/flac"),
+        (MediaContentType::AudioOpus, "audio/opus"),
+        (MediaContentType::AudioWebm, "audio/webm"),
+        (MediaContentType::VideoMp4, "video/mp4"),
+        (MediaContentType::VideoWebm, "video/webm"),
+        (MediaContentType::VideoOgg, "video/ogg"),
+        (MediaContentType::VideoMpeg, "video/mpeg"),
+        (MediaContentType::VideoQuicktime, "video/quicktime"),
+        (MediaContentType::VideoXMsvideo, "video/x-msvideo"),
+        (MediaContentType::VideoXMatroska, "video/x-matroska"),
+        (MediaContentType::TextPlain, "text/plain"),
+        (MediaContentType::TextHtml, "text/html"),
+        (MediaContentType::TextCss, "text/css"),
+        (MediaContentType::TextCsv, "text/csv"),
+        (MediaContentType::TextMarkdown, "text/markdown"),
+        (MediaContentType::TextXPython, "text/x-python"),
+        (
+            MediaContentType::ApplicationJavascript,
+            "application/javascript",
+        ),
+        (MediaContentType::TextXTypescript, "text/x-typescript"),
+        (MediaContentType::ApplicationXYaml, "application/x-yaml"),
+        (MediaContentType::ApplicationPdf, "application/pdf"),
+        (MediaContentType::ApplicationMsword, "application/msword"),
+        (
+            MediaContentType::ApplicationVndMsExcel,
+            "application/vnd.ms-excel",
+        ),
+        (
+            MediaContentType::ApplicationVndOpenxmlformatsOfficedocumentSpreadsheetmlSheet,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        (MediaContentType::ApplicationZip, "application/zip"),
+        (MediaContentType::ApplicationJson, "application/json"),
+        (MediaContentType::ApplicationXml, "application/xml"),
+        (
+            MediaContentType::ApplicationOctetStream,
+            "application/octet-stream",
+        ),
+        (
+            MediaContentType::ApplicationVndOpenxmlformatsOfficedocumentWordprocessingmlDocument,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        (
+            MediaContentType::ApplicationVndOpenxmlformatsOfficedocumentPresentationmlPresentation,
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ),
+        (MediaContentType::ApplicationRtf, "application/rtf"),
+        (MediaContentType::ApplicationXNdjson, "application/x-ndjson"),
+        (
+            MediaContentType::ApplicationVndApacheParquet,
+            "application/vnd.apache.parquet",
+        ),
+        (MediaContentType::ApplicationGzip, "application/gzip"),
+        (MediaContentType::ApplicationXTar, "application/x-tar"),
+        (
+            MediaContentType::ApplicationX7zCompressed,
+            "application/x-7z-compressed",
+        ),
+    ];
+    assert_eq!(cases.len(), 52);
+    for (variant, wire) in cases {
+        assert_eq!(serde_json::to_value(variant).unwrap(), wire);
+    }
+}
+
+#[test]
+fn dataset_item_media_reference_field_values() {
+    let cases = [
+        (DatasetItemMediaReferenceField::Input, "input"),
+        (
+            DatasetItemMediaReferenceField::ExpectedOutput,
+            "expectedOutput",
+        ),
+        (DatasetItemMediaReferenceField::Metadata, "metadata"),
+    ];
+    for (variant, wire) in cases {
+        assert_eq!(serde_json::to_value(&variant).unwrap(), wire);
+        let back: DatasetItemMediaReferenceField = serde_json::from_value(wire.into()).unwrap();
+        assert_eq!(back, variant);
+    }
+    assert_unknown_fallback(DatasetItemMediaReferenceField::Unknown);
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Ingestion (OTel) — serialization
 // ═══════════════════════════════════════════════════════════════════════
@@ -1136,12 +1459,14 @@ fn serialize_ingest_traces_request() {
                 scope: Some(OtelInstrumentationScope {
                     name: Some("langfuse-sdk".into()),
                     version: Some("0.1.0".into()),
+                    attributes: None,
                 }),
                 spans: vec![OtelSpan {
                     trace_id: "abc123".into(),
                     span_id: "span-1".into(),
                     parent_span_id: None,
                     name: "llm-call".into(),
+                    kind: Some(3),
                     start_time_unix_nano: "1718445600000000000".into(),
                     end_time_unix_nano: "1718445605000000000".into(),
                     attributes: Some(vec![
@@ -1181,12 +1506,14 @@ fn serialize_ingest_traces_request() {
     assert_eq!(span["attributes"][1]["value"]["intValue"], 150);
     assert_eq!(span["status"]["code"], 1);
     assert!(span["status"]["message"].is_null());
+    assert_eq!(span["kind"], 3);
 
     let resource = &json["resourceSpans"][0]["resource"];
     assert_eq!(resource["attributes"][0]["key"], "service.name");
 
     let scope = &json["resourceSpans"][0]["scopeSpans"][0]["scope"];
     assert_eq!(scope["name"], "langfuse-sdk");
+    assert!(!scope.as_object().unwrap().contains_key("attributes"));
 }
 
 #[test]
@@ -1194,13 +1521,13 @@ fn serialize_otel_any_value_only_populated_fields() {
     let val = OtelAnyValue {
         string_value: None,
         int_value: None,
-        double_value: Some(3.14),
+        double_value: Some(2.5),
         bool_value: None,
     };
     let json = serde_json::to_value(&val).unwrap();
     let obj = json.as_object().unwrap();
     assert_eq!(obj.len(), 1);
-    assert!((obj["doubleValue"].as_f64().unwrap() - 3.14).abs() < f64::EPSILON);
+    assert!((obj["doubleValue"].as_f64().unwrap() - 2.5).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -1259,8 +1586,7 @@ fn cursor_paginated_with_next_cursor() {
         "data": [{"status": "OK", "version": "1.0"}],
         "meta": {"cursor": "eyJpZCI6ImFiYyJ9"}
     }"#;
-    let page: langfuse_sdk::CursorPaginated<HealthResponse> =
-        serde_json::from_str(json).unwrap();
+    let page: langfuse_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
     assert_eq!(page.data.len(), 1);
     assert_eq!(page.meta.cursor.as_deref(), Some("eyJpZCI6ImFiYyJ9"));
 }
@@ -1271,8 +1597,7 @@ fn cursor_paginated_no_next_page() {
         "data": [{"status": "OK", "version": "1.0"}],
         "meta": {"cursor": null}
     }"#;
-    let page: langfuse_sdk::CursorPaginated<HealthResponse> =
-        serde_json::from_str(json).unwrap();
+    let page: langfuse_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
     assert!(page.meta.cursor.is_none());
 }
 
@@ -1282,8 +1607,7 @@ fn cursor_paginated_missing_cursor_field() {
         "data": [],
         "meta": {}
     }"#;
-    let page: langfuse_sdk::CursorPaginated<HealthResponse> =
-        serde_json::from_str(json).unwrap();
+    let page: langfuse_sdk::CursorPaginated<HealthResponse> = serde_json::from_str(json).unwrap();
     assert!(page.meta.cursor.is_none());
 }
 
@@ -1358,10 +1682,12 @@ fn get_skill_params_serialization() {
     let params = langfuse_sdk::api::skills::GetSkillParams {
         label: Some("latest".into()),
         include_content: Some(true),
+        version: None,
     };
     let json = serde_json::to_value(&params).unwrap();
     assert_eq!(json["label"], "latest");
     assert_eq!(json["includeContent"], true);
+    assert!(!json.as_object().unwrap().contains_key("version"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1446,13 +1772,6 @@ fn large_json_value_metadata() {
     let meta = obs.metadata.unwrap();
     assert!(meta["nested"]["deep"]["array"].is_array());
     assert_eq!(meta["list"][4], 42);
-}
-
-#[test]
-fn create_score_response_deserialize() {
-    let json = r#"{"id": "new-score-123"}"#;
-    let r: CreateScoreResponse = serde_json::from_str(json).unwrap();
-    assert_eq!(r.id, "new-score-123");
 }
 
 #[test]

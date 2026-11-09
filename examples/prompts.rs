@@ -6,7 +6,7 @@
 //! ```
 
 use langfuse_sdk::api::prompts::{GetPromptParams, ListPromptsParams};
-use langfuse_sdk::models::prompts::{ChatMessage, CreatePromptRequest, Prompt};
+use langfuse_sdk::models::prompts::{ChatPromptMessage, CreatePromptRequest, Prompt};
 use langfuse_sdk::{ClientConfig, LangfuseClient};
 
 fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
@@ -15,8 +15,7 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
         std::env::var("LANGFUSE_SECRET_KEY")?,
     )
     .base_url(
-        std::env::var("LANGFUSE_BASE_URL")
-            .unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
+        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
     )
     .build()?;
     Ok(LangfuseClient::new(config)?)
@@ -48,14 +47,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .create(&CreatePromptRequest::Chat {
             name: "rust-sdk-assistant".into(),
             prompt: vec![
-                ChatMessage {
-                    role: "system".into(),
-                    content: "You are a helpful coding assistant specializing in {{language}}.".into(),
-                },
-                ChatMessage {
-                    role: "user".into(),
-                    content: "{{user_question}}".into(),
-                },
+                ChatPromptMessage::message(
+                    "system",
+                    "You are a helpful coding assistant specializing in {{language}}.",
+                ),
+                ChatPromptMessage::placeholder("chat_history"),
+                ChatPromptMessage::message("user", "{{user_question}}"),
             ],
             config: Some(serde_json::json!({"temperature": 0.3})),
             labels: None,
@@ -94,8 +91,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         list.meta.total_items
     );
     for p in &list.data {
-        let ver = p.version.map(|v| format!("v{v}")).unwrap_or_else(|| "-".into());
-        println!("  - {} {} [{}] ({})", p.name, ver, p.r#type, p.labels.join(", "));
+        let versions: Vec<String> = p.versions.iter().map(|v| format!("v{v}")).collect();
+        println!(
+            "  - {} [{}] [{:?}] ({})",
+            p.name,
+            versions.join(", "),
+            p.r#type,
+            p.labels.join(", ")
+        );
     }
 
     Ok(())
@@ -106,14 +109,25 @@ fn print_prompt(prompt: &Prompt) {
         Prompt::Text { base, prompt } => {
             println!("  [text] {} v{}", base.name, base.version);
             println!("  Labels: {:?}", base.labels);
-            println!("  Template: {}", &prompt[..prompt.len().min(80)]);
+            println!(
+                "  Template: {}",
+                prompt.chars().take(80).collect::<String>()
+            );
         }
         Prompt::Chat { base, prompt } => {
             println!("  [chat] {} v{}", base.name, base.version);
             println!("  Labels: {:?}", base.labels);
             println!("  Messages: {} turn(s)", prompt.len());
             for msg in prompt {
-                println!("    {}: {}", msg.role, &msg.content[..msg.content.len().min(60)]);
+                match msg {
+                    ChatPromptMessage::Message(m) => {
+                        let preview: String = m.content.chars().take(60).collect();
+                        println!("    {}: {}", m.role, preview);
+                    }
+                    ChatPromptMessage::Placeholder(p) => {
+                        println!("    <placeholder {}>", p.name);
+                    }
+                }
             }
         }
     }

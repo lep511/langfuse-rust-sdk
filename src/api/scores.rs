@@ -3,8 +3,8 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::error::LangfuseError;
-use crate::http::HttpClient;
-use crate::models::scores::{CreateScoreRequest, CreateScoreResponse, ScoreV3};
+use crate::http::{HttpClient, encode_path_segment};
+use crate::models::scores::{CreateScoreRequest, CreateScoresResponse, ScoreV3};
 use crate::pagination::CursorPaginated;
 
 pub struct ScoresClient {
@@ -57,6 +57,7 @@ pub struct ListScoresParams {
 }
 
 impl ScoresClient {
+    /// `GET /api/public/v3/scores` (cursor-paginated).
     pub async fn list(
         &self,
         params: &ListScoresParams,
@@ -66,16 +67,25 @@ impl ScoresClient {
             .await
     }
 
+    /// `POST /api/public/scores`: create a batch of scores asynchronously.
+    ///
+    /// Returns [`CreateScoresResponse::Accepted`] (HTTP 202) when every score was
+    /// accepted, or [`CreateScoresResponse::BatchResults`] (HTTP 207) with per-score
+    /// errors. Do not retry a 207 batch automatically.
     pub async fn create(
         &self,
-        req: &CreateScoreRequest,
-    ) -> Result<CreateScoreResponse, LangfuseError> {
-        self.http.post("/api/public/scores", req).await
+        scores: &[CreateScoreRequest],
+    ) -> Result<CreateScoresResponse, LangfuseError> {
+        self.http.post("/api/public/scores", &scores).await
     }
 
+    /// `DELETE /api/public/scores/{scoreId}` (204).
     pub async fn delete(&self, score_id: &str) -> Result<(), LangfuseError> {
         self.http
-            .delete_no_content(&format!("/api/public/scores/{score_id}"))
+            .delete_no_content(&format!(
+                "/api/public/scores/{}",
+                encode_path_segment(score_id)
+            ))
             .await
     }
 }

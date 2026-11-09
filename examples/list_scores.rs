@@ -15,8 +15,7 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
         std::env::var("LANGFUSE_SECRET_KEY")?,
     )
     .base_url(
-        std::env::var("LANGFUSE_BASE_URL")
-            .unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
+        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
     )
     .build()?;
     Ok(LangfuseClient::new(config)?)
@@ -27,29 +26,18 @@ fn score_summary(score: &ScoreV3) -> String {
         ScoreV3::Numeric { base, value } => {
             format!("{} = {:.2} (numeric)", base.name, value)
         }
-        ScoreV3::Boolean {
-            base, string_value, ..
-        } => {
-            format!("{} = {} (boolean)", base.name, string_value)
+        ScoreV3::Boolean { base, value } => {
+            format!("{} = {} (boolean)", base.name, value)
         }
-        ScoreV3::Categorical {
-            base, string_value, ..
-        } => {
-            format!("{} = {} (categorical)", base.name, string_value)
+        ScoreV3::Categorical { base, value } => {
+            format!("{} = {} (categorical)", base.name, value)
         }
-        ScoreV3::Correction {
-            base, string_value, ..
-        } => {
-            format!("{} = {} (correction)", base.name, string_value)
+        ScoreV3::Correction { base, value } => {
+            format!("{} = {} (correction)", base.name, value)
         }
-        ScoreV3::Text {
-            base, string_value, ..
-        } => {
-            format!(
-                "{} = \"{}\" (text)",
-                base.name,
-                &string_value[..string_value.len().min(40)]
-            )
+        ScoreV3::Text { base, value } => {
+            let preview: String = value.chars().take(40).collect();
+            format!("{} = \"{}\" (text)", base.name, preview)
         }
     }
 }

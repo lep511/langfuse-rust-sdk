@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::error::LangfuseError;
-use crate::http::HttpClient;
+use crate::http::{HttpClient, encode_path_segment};
 use crate::models::datasets::{CreateDatasetRequest, Dataset};
 use crate::pagination::{PageParams, Paginated};
 
@@ -22,7 +22,10 @@ impl DatasetsClient {
 
     pub async fn get(&self, dataset_name: &str) -> Result<Dataset, LangfuseError> {
         self.http
-            .get(&format!("/api/public/v2/datasets/{dataset_name}"))
+            .get(&format!(
+                "/api/public/v2/datasets/{}",
+                encode_path_segment(dataset_name)
+            ))
             .await
     }
 }

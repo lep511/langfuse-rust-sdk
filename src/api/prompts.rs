@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use serde::Serialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::error::LangfuseError;
-use crate::http::HttpClient;
+use crate::http::{HttpClient, encode_path_segment};
+use crate::models::enums::PromptType;
 use crate::models::prompts::{CreatePromptRequest, Prompt};
 use crate::pagination::Paginated;
 
@@ -28,17 +30,25 @@ pub struct ListPromptsParams {
     pub from_updated_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_updated_at: Option<String>,
+    /// JSON-encoded array of filter conditions. When set, it takes precedence over
+    /// `name`, `label`, `tag`, `from_updated_at` and `to_updated_at`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
 }
 
 /// Metadata returned for each prompt in the list endpoint (no prompt content).
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptMeta {
     pub name: String,
-    pub version: Option<i64>,
+    pub r#type: PromptType,
+    pub versions: Vec<i64>,
     pub labels: Vec<String>,
     pub tags: Vec<String>,
-    pub r#type: String,
+    pub last_updated_at: DateTime<Utc>,
+    /// Config of the most recent matching version (`null` when unset).
+    #[serde(default)]
+    pub last_config: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -48,10 +58,13 @@ pub struct GetPromptParams {
     pub version: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Resolve prompt dependencies (server default `true`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolve: Option<bool>,
 }
 
+/// Restrict a prompt deletion to one label or version. With neither set, every
+/// version of the prompt is deleted.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeletePromptParams {
@@ -76,9 +89,7 @@ impl PromptsClient {
     }
 
     pub async fn get(&self, name: &str) -> Result<Prompt, LangfuseError> {
-        self.http
-            .get(&format!("/api/public/v2/prompts/{name}"))
-            .await
+        self.http.get(&prompt_path(name)).await
     }
 
     pub async fn get_with_params(
@@ -86,14 +97,26 @@ impl PromptsClient {
         name: &str,
         params: &GetPromptParams,
     ) -> Result<Prompt, LangfuseError> {
-        self.http
-            .get_with_query(&format!("/api/public/v2/prompts/{name}"), params)
-            .await
+        self.http.get_with_query(&prompt_path(name), params).await
     }
 
+    /// `DELETE /api/public/v2/prompts/{promptName}`: delete every version (204).
     pub async fn delete(&self, name: &str) -> Result<(), LangfuseError> {
+        self.http.delete_no_content(&prompt_path(name)).await
+    }
+
+    /// `DELETE /api/public/v2/prompts/{promptName}?label=..&version=..` (204).
+    pub async fn delete_with_params(
+        &self,
+        name: &str,
+        params: &DeletePromptParams,
+    ) -> Result<(), LangfuseError> {
         self.http
-            .delete_no_content(&format!("/api/public/v2/prompts/{name}"))
+            .delete_no_content_with_query(&prompt_path(name), params)
             .await
     }
+}
+
+fn prompt_path(name: &str) -> String {
+    format!("/api/public/v2/prompts/{}", encode_path_segment(name))
 }

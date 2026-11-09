@@ -7,7 +7,7 @@
 //! ```
 
 use langfuse_sdk::api::skills::{GetSkillParams, ListSkillsParams};
-use langfuse_sdk::models::skills::{CreateSkillVersionRequest, SkillVersionFileInput};
+use langfuse_sdk::models::skills::{CreateSkillVersionRequest, SkillVersionFileCreateInput};
 use langfuse_sdk::tools::YamlTool;
 use langfuse_sdk::{ClientConfig, LangfuseClient};
 
@@ -17,15 +17,18 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
         std::env::var("LANGFUSE_SECRET_KEY")?,
     )
     .base_url(
-        std::env::var("LANGFUSE_BASE_URL")
-            .unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
+        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
     )
     .build()?;
     Ok(LangfuseClient::new(config)?)
 }
 
 /// Build SKILL.md content with YAML frontmatter using YamlTool.
-fn build_skill_md(name: &str, description: &str, body: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn build_skill_md(
+    name: &str,
+    description: &str,
+    body: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let frontmatter = serde_json::json!({
         "name": name,
         "description": description,
@@ -86,19 +89,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .skills
         .create_version(&CreateSkillVersionRequest {
             files: vec![
-                SkillVersionFileInput {
-                    path: "SKILL.md".into(),
-                    content: skill_md,
-                },
-                SkillVersionFileInput {
-                    path: "references/checklist.md".into(),
-                    content: checklist_md,
-                },
+                SkillVersionFileCreateInput::content("SKILL.md", skill_md),
+                SkillVersionFileCreateInput::content("references/checklist.md", checklist_md),
             ],
             commit_message: Some("Code review skill with YAML-built frontmatter".into()),
         })
         .await?;
-    println!("Created: {} v{} (labels: {:?})", created.name, created.version, created.labels);
+    println!(
+        "Created: {} v{} (labels: {:?})",
+        created.name, created.version, created.labels
+    );
     println!("Files: {}", created.files.len());
     for f in &created.files {
         println!("  - {} ({} bytes)", f.path, f.content_length);
@@ -114,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &GetSkillParams {
                 label: Some("latest".into()),
                 include_content: Some(true),
+                ..Default::default()
             },
         )
         .await?;
@@ -134,7 +135,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  description: {}", fm_desc.as_str().unwrap_or("?"));
     println!("  keys: {:?}", YamlTool::keys(&frontmatter));
 
-    println!("\nBody preview: {}...", &body[..body.len().min(80)]);
+    println!(
+        "\nBody preview: {}...",
+        body.chars().take(80).collect::<String>()
+    );
 
     // 4. Convert skill metadata to YAML for display
     println!("\n=== Skill metadata as YAML ===\n");
@@ -185,7 +189,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         skills.meta.total_items
     );
     for s in &skills.data {
-        println!("  - {} (tags: {:?})", s.name, s.tags);
+        println!(
+            "  - {} v{} (tags: {:?}, production: {:?})",
+            s.name, s.latest_version, s.tags, s.production_version
+        );
+    }
+    if skills.meta.has_next_page {
+        println!("  ... more on the next page");
     }
 
     Ok(())

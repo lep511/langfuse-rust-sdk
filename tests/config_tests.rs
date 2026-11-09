@@ -158,6 +158,17 @@ fn client_with_custom_config() {
     let _ = &client.traces;
     let _ = &client.ingestion;
     let _ = &client.media;
+    let _ = &client.comments;
+    let _ = &client.feedback;
+    let _ = &client.annotation_queues;
+    let _ = &client.blob_storage_integrations;
+    let _ = &client.evaluation_rules;
+    let _ = &client.evaluators;
+    let _ = &client.experiments;
+    let _ = &client.llm_connections;
+    let _ = &client.metrics;
+    let _ = &client.organizations;
+    let _ = &client.scim;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -244,10 +255,7 @@ fn error_display_server_error() {
         message: "Service unavailable".into(),
         body: None,
     };
-    assert_eq!(
-        err.to_string(),
-        "Server error (503): Service unavailable"
-    );
+    assert_eq!(err.to_string(), "Server error (503): Service unavailable");
 }
 
 #[test]
@@ -345,4 +353,14 @@ fn retry_policy_jitter_stays_in_bounds() {
             );
         }
     }
+}
+
+#[cfg(feature = "unstable")]
+#[test]
+fn unstable_sub_clients_exist_with_feature() {
+    let config = ClientConfig::builder("pk-test", "sk-test").build().unwrap();
+    let client = LangfuseClient::new(config).unwrap();
+    let _ = &client.unstable_dashboard_widgets;
+    let _ = &client.unstable_dashboards;
+    let _ = &client.unstable_topics;
 }

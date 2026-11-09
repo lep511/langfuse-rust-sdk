@@ -3,8 +3,10 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::error::LangfuseError;
-use crate::http::HttpClient;
-use crate::models::dataset_items::{CreateDatasetItemRequest, DatasetItem};
+use crate::http::{HttpClient, encode_path_segment};
+use crate::models::dataset_items::{
+    CreateDatasetItemRequest, DatasetItem, DeleteDatasetItemResponse,
+};
 use crate::pagination::Paginated;
 
 pub struct DatasetItemsClient {
@@ -47,13 +49,20 @@ impl DatasetItemsClient {
 
     pub async fn get(&self, id: &str) -> Result<DatasetItem, LangfuseError> {
         self.http
-            .get(&format!("/api/public/dataset-items/{id}"))
+            .get(&format!(
+                "/api/public/dataset-items/{}",
+                encode_path_segment(id)
+            ))
             .await
     }
 
-    pub async fn delete(&self, id: &str) -> Result<(), LangfuseError> {
+    /// `DELETE /api/public/dataset-items/{id}`
+    pub async fn delete(&self, id: &str) -> Result<DeleteDatasetItemResponse, LangfuseError> {
         self.http
-            .delete_no_content(&format!("/api/public/dataset-items/{id}"))
+            .delete_with_response(&format!(
+                "/api/public/dataset-items/{}",
+                encode_path_segment(id)
+            ))
             .await
     }
 }

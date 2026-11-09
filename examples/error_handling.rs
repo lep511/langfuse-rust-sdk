@@ -14,8 +14,7 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
         std::env::var("LANGFUSE_SECRET_KEY")?,
     )
     .base_url(
-        std::env::var("LANGFUSE_BASE_URL")
-            .unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
+        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
     )
     .build()?;
     Ok(LangfuseClient::new(config)?)
@@ -37,10 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Not Found ===");
     match client
         .skills
-        .get(
-            "nonexistent-skill-xyz-12345",
-            &GetSkillParams::default(),
-        )
+        .get("nonexistent-skill-xyz-12345", &GetSkillParams::default())
         .await
     {
         Err(LangfuseError::NotFound { message, .. }) => {
@@ -70,7 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let bad_client = LangfuseClient::new(bad_config)?;
     match bad_client.health.check().await {
-        Ok(h) => println!("  Health returned (server may not require auth): {}", h.status),
+        Ok(h) => println!(
+            "  Health returned (server may not require auth): {}",
+            h.status
+        ),
         Err(LangfuseError::Unauthorized { message, .. }) => {
             println!("  Unauthorized (expected): {message}");
         }

@@ -14,8 +14,7 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
         std::env::var("LANGFUSE_SECRET_KEY")?,
     )
     .base_url(
-        std::env::var("LANGFUSE_BASE_URL")
-            .unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
+        std::env::var("LANGFUSE_BASE_URL").unwrap_or_else(|_| "https://cloud.langfuse.com".into()),
     )
     .build()?;
     Ok(LangfuseClient::new(config)?)
@@ -71,12 +70,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 scope: Some(OtelInstrumentationScope {
                     name: Some("langfuse-sdk-rust".into()),
                     version: Some("0.1.0".into()),
+                    attributes: None,
                 }),
                 spans: vec![OtelSpan {
                     trace_id: trace_id.clone(),
                     span_id,
                     parent_span_id: None,
                     name: "llm-generation".into(),
+                    kind: Some(3), // CLIENT
                     start_time_unix_nano: start_ns,
                     end_time_unix_nano: end_ns,
                     attributes: Some(vec![

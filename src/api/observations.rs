@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use crate::error::LangfuseError;
 use crate::http::HttpClient;
@@ -11,48 +11,84 @@ pub struct ObservationsClient {
     pub(crate) http: Arc<HttpClient>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Query parameters of `GET /api/public/v2/observations`.
+///
+/// Serialized as a list of `(key, value)` pairs so that `environment` can be
+/// repeated once per value (`environment=a&environment=b`), as the API expects.
+#[derive(Debug, Clone, Default)]
 pub struct ListObservationsParams {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub r#type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_observation_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub environment: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Matches any of the given environments.
+    pub environment: Option<Vec<String>>,
     pub from_start_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub to_start_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Comma-separated field groups to include (e.g. `core,basic,usage`).
     pub fields: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub expand_metadata: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub parse_io_as_json: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_root_observation: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// JSON-encoded array of filter conditions.
     pub filter: Option<String>,
 }
 
+impl ListObservationsParams {
+    fn to_pairs(&self) -> Vec<(&'static str, String)> {
+        fn push<T: ToString>(
+            pairs: &mut Vec<(&'static str, String)>,
+            key: &'static str,
+            value: &Option<T>,
+        ) {
+            if let Some(v) = value {
+                pairs.push((key, v.to_string()));
+            }
+        }
+
+        let mut pairs = Vec::new();
+        push(&mut pairs, "limit", &self.limit);
+        push(&mut pairs, "cursor", &self.cursor);
+        push(&mut pairs, "name", &self.name);
+        push(&mut pairs, "userId", &self.user_id);
+        push(&mut pairs, "sessionId", &self.session_id);
+        push(&mut pairs, "type", &self.r#type);
+        push(&mut pairs, "traceId", &self.trace_id);
+        push(&mut pairs, "level", &self.level);
+        push(
+            &mut pairs,
+            "parentObservationId",
+            &self.parent_observation_id,
+        );
+        for env in self.environment.iter().flatten() {
+            pairs.push(("environment", env.clone()));
+        }
+        push(&mut pairs, "fromStartTime", &self.from_start_time);
+        push(&mut pairs, "toStartTime", &self.to_start_time);
+        push(&mut pairs, "version", &self.version);
+        push(&mut pairs, "fields", &self.fields);
+        push(&mut pairs, "expandMetadata", &self.expand_metadata);
+        push(&mut pairs, "parseIoAsJson", &self.parse_io_as_json);
+        push(&mut pairs, "isRootObservation", &self.is_root_observation);
+        push(&mut pairs, "filter", &self.filter);
+        pairs
+    }
+}
+
+impl Serialize for ListObservationsParams {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.to_pairs())
+    }
+}
+
 impl ObservationsClient {
+    /// `GET /api/public/v2/observations` (cursor-paginated).
     pub async fn list(
         &self,
         params: &ListObservationsParams,

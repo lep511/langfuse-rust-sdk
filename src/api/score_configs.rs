@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use crate::error::LangfuseError;
-use crate::http::HttpClient;
-use crate::models::score_configs::{CreateScoreConfigRequest, ScoreConfig, UpdateScoreConfigRequest};
+use crate::http::{HttpClient, encode_path_segment};
+use crate::models::score_configs::{
+    CreateScoreConfigRequest, ScoreConfig, UpdateScoreConfigRequest,
+};
 use crate::pagination::{PageParams, Paginated};
 
 pub struct ScoreConfigsClient {
@@ -10,10 +12,7 @@ pub struct ScoreConfigsClient {
 }
 
 impl ScoreConfigsClient {
-    pub async fn list(
-        &self,
-        params: &PageParams,
-    ) -> Result<Paginated<ScoreConfig>, LangfuseError> {
+    pub async fn list(&self, params: &PageParams) -> Result<Paginated<ScoreConfig>, LangfuseError> {
         self.http
             .get_with_query("/api/public/score-configs", params)
             .await
@@ -27,9 +26,7 @@ impl ScoreConfigsClient {
     }
 
     pub async fn get(&self, config_id: &str) -> Result<ScoreConfig, LangfuseError> {
-        self.http
-            .get(&format!("/api/public/score-configs/{config_id}"))
-            .await
+        self.http.get(&config_path(config_id)).await
     }
 
     pub async fn update(
@@ -37,8 +34,13 @@ impl ScoreConfigsClient {
         config_id: &str,
         req: &UpdateScoreConfigRequest,
     ) -> Result<ScoreConfig, LangfuseError> {
-        self.http
-            .patch(&format!("/api/public/score-configs/{config_id}"), req)
-            .await
+        self.http.patch(&config_path(config_id), req).await
     }
+}
+
+fn config_path(config_id: &str) -> String {
+    format!(
+        "/api/public/score-configs/{}",
+        encode_path_segment(config_id)
+    )
 }

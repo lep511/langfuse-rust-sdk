@@ -28,14 +28,15 @@ impl Default for RetryPolicy {
 }
 
 impl RetryPolicy {
+    /// Whether a failed request with `status` should be retried on attempt `attempt`.
+    ///
+    /// Retryable statuses: 408, 429 and 5xx. 409 is not retried because it signals
+    /// a real conflict (duplicate id, resource still referenced) that a retry cannot fix.
     pub fn should_retry(&self, status: StatusCode, attempt: u32) -> bool {
         if attempt >= self.max_retries {
             return false;
         }
-        matches!(
-            status.as_u16(),
-            408 | 409 | 429 | 500..=599
-        )
+        matches!(status.as_u16(), 408 | 429 | 500..=599)
     }
 
     pub fn delay(&self, attempt: u32, retry_after: Option<Duration>) -> Duration {
@@ -63,7 +64,6 @@ mod tests {
         let policy = RetryPolicy::default();
         assert!(policy.should_retry(StatusCode::TOO_MANY_REQUESTS, 0));
         assert!(policy.should_retry(StatusCode::REQUEST_TIMEOUT, 0));
-        assert!(policy.should_retry(StatusCode::CONFLICT, 0));
         assert!(policy.should_retry(StatusCode::INTERNAL_SERVER_ERROR, 0));
         assert!(policy.should_retry(StatusCode::BAD_GATEWAY, 0));
         assert!(policy.should_retry(StatusCode::SERVICE_UNAVAILABLE, 0));
@@ -76,6 +76,8 @@ mod tests {
         assert!(!policy.should_retry(StatusCode::UNAUTHORIZED, 0));
         assert!(!policy.should_retry(StatusCode::FORBIDDEN, 0));
         assert!(!policy.should_retry(StatusCode::NOT_FOUND, 0));
+        assert!(!policy.should_retry(StatusCode::CONFLICT, 0));
+        assert!(!policy.should_retry(StatusCode::PRECONDITION_FAILED, 0));
     }
 
     #[test]

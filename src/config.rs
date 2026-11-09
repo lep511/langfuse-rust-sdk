@@ -81,8 +81,8 @@ impl ConfigBuilder {
 
     pub fn build(self) -> Result<ClientConfig, LangfuseError> {
         let raw_url = self.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL);
-        let base_url =
-            Url::parse(raw_url).map_err(|e| LangfuseError::Config(format!("Invalid base URL '{raw_url}': {e}")))?;
+        let base_url = Url::parse(raw_url)
+            .map_err(|e| LangfuseError::Config(format!("Invalid base URL '{raw_url}': {e}")))?;
 
         let credentials = format!("{}:{}", self.public_key, self.secret_key);
         let encoded = STANDARD.encode(credentials.as_bytes());
