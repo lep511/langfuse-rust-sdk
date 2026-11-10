@@ -10,6 +10,8 @@ documentation = "https://docs.rs/langfuse-rust-sdk"
 readme = "README.md"
 keywords = ["langfuse", "llm", "observability", "tracing", "sdk"]
 categories = ["api-bindings", "development-tools"]
+# Development-only Cargo settings (aliases) are not part of the package.
+exclude = [".cargo/"]
 
 [workspace]
 # `integration-tests` (unpublished) holds the tests and examples that need rig
@@ -117,6 +119,6 @@ required-features = ["blocking"]
 # Panic messages keep their file:line; backtrace frames keep their names but
 # lose file:line. For a debugging session, opt back in with
 # `CARGO_PROFILE_DEV_DEBUG=line-tables-only` (or `full`). `cargo test` uses
-# the `test` profile, which inherits these settings.
+# the `test` profile, which inherits these settings. See docs/build-footprint.md.
 [profile.dev]
 debug = false

@@ -1,0 +1,9 @@
+# Repository-wide Cargo settings. Keep this file portable: machine-specific
+# settings (such as the rust-lld linker flags in docs/build-footprint.md)
+# belong in ~/.cargo/config.toml.
+
+[alias]
+# Remove every build of the workspace crates (the test and example binaries
+# of every feature set, and their incremental data), keeping the compiled
+# dependencies. See docs/build-footprint.md.
+clean-own = "clean -p langfuse-rust-sdk -p langfuse-rust-sdk-macros -p langfuse-rust-sdk-integration-tests"

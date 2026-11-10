@@ -30,6 +30,10 @@ profiles of dependencies).
   The integration member builds the SDK with `rt-tokio` and
   `default-https-client` only, dropping the legacy hyper 0.14 / rustls 0.21
   stack its `rustls` default feature added.
+- `docs/build-footprint.md` documents the measurements, the day-to-day
+  workflow (feature sets, debugging, rust-analyzer settings, optional
+  rust-lld linking) and the cleanup routine; `.cargo/config.toml` adds the
+  `cargo clean-own` alias.
 
 ## [0.10.2] - 2026-11-10
 
