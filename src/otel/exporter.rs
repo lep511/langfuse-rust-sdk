@@ -1,21 +1,215 @@
-//! Background export of finished spans to `POST /api/public/otel/v1/traces`.
+//! Background export of finished spans to `POST /api/public/otel/v1/traces`
+//! (or a custom exporter), with the export-stage hooks: media upload and
+//! [`mask_otel_spans`](super::TracingOptions::mask_otel_spans).
 
+use std::fmt;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use opentelemetry::trace::{SpanId, SpanKind, Status};
-use opentelemetry::{Array, KeyValue, Value as OtelValue};
+use futures_util::future::BoxFuture;
+use opentelemetry::trace::{SpanId, SpanKind, Status, TraceId};
+use opentelemetry::{Array, InstrumentationScope, KeyValue, Value as OtelValue};
 use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::trace::SpanData;
+use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use tokio::sync::{mpsc, oneshot};
 
 use super::attributes::dedupe_last_wins;
+use super::options::{Compression, SpanMaskFn};
 use crate::LangfuseClient;
+use crate::api::ingestion::OTEL_TRACES_PATH;
 use crate::media::{MediaTarget, extract_from_attribute, field_for_attribute};
 use crate::models::ingestion::{
     IngestTracesRequest, OtelAnyValue, OtelInstrumentationScope, OtelKeyValue, OtelResource,
     OtelResourceSpan, OtelScopeSpan, OtelSpan, OtelSpanEvent, OtelSpanLink, OtelStatus,
 };
+
+/// A finished span of an export batch, as passed to
+/// [`TracingOptions::mask_otel_spans`](super::TracingOptions::mask_otel_spans).
+///
+/// Everything can be read ([`span`](Self::span) gives the whole
+/// [`SpanData`]), but only the attributes can change, as in the Python SDK:
+/// IDs, name, parent, events, links, scope and resource stay as they are.
+/// The attributes come de-duplicated (one entry per key) and already hold the
+/// media reference strings of uploaded media. Attributes left with an empty
+/// key are dropped.
+pub struct MaskableSpan {
+    span: SpanData,
+    resource: Option<Resource>,
+}
+
+impl fmt::Debug for MaskableSpan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MaskableSpan")
+            .field("name", &self.span.name)
+            .field("trace_id", &self.trace_id())
+            .field("span_id", &self.span_id())
+            .field("attributes", &self.span.attributes)
+            .finish_non_exhaustive()
+    }
+}
+
+impl MaskableSpan {
+    /// The span as it would be exported.
+    pub fn span(&self) -> &SpanData {
+        &self.span
+    }
+
+    /// Trace ID of the span.
+    pub fn trace_id(&self) -> TraceId {
+        self.span.span_context.trace_id()
+    }
+
+    /// ID of the span.
+    pub fn span_id(&self) -> SpanId {
+        self.span.span_context.span_id()
+    }
+
+    /// ID of the parent span, if any.
+    pub fn parent_span_id(&self) -> Option<SpanId> {
+        (self.span.parent_span_id != SpanId::INVALID).then_some(self.span.parent_span_id)
+    }
+
+    /// Name of the span.
+    pub fn name(&self) -> &str {
+        &self.span.name
+    }
+
+    /// Instrumentation scope (name, version and attributes) of the span.
+    pub fn instrumentation_scope(&self) -> &InstrumentationScope {
+        &self.span.instrumentation_scope
+    }
+
+    /// Resource of the tracer provider (`service.name`, `langfuse.environment`, ...).
+    pub fn resource(&self) -> Option<&Resource> {
+        self.resource.as_ref()
+    }
+
+    /// The attributes that will be exported.
+    pub fn attributes(&self) -> &[KeyValue] {
+        &self.span.attributes
+    }
+
+    /// The attributes, to edit freely. When a key appears more than once, the
+    /// last entry is exported.
+    pub fn attributes_mut(&mut self) -> &mut Vec<KeyValue> {
+        &mut self.span.attributes
+    }
+
+    /// The value of attribute `key`, if present.
+    pub fn attribute(&self, key: &str) -> Option<&OtelValue> {
+        self.span
+            .attributes
+            .iter()
+            .rev()
+            .find(|kv| kv.key.as_str() == key)
+            .map(|kv| &kv.value)
+    }
+
+    /// Set an attribute, replacing any with the same key.
+    pub fn set_attribute(&mut self, attribute: KeyValue) {
+        self.span.attributes.retain(|kv| kv.key != attribute.key);
+        self.span.attributes.push(attribute);
+    }
+
+    /// Remove attribute `key`; returns its value if it was present.
+    pub fn remove_attribute(&mut self, key: &str) -> Option<OtelValue> {
+        let mut removed = None;
+        self.span.attributes.retain(|kv| {
+            if kv.key.as_str() == key {
+                removed = Some(kv.value.clone());
+                false
+            } else {
+                true
+            }
+        });
+        removed
+    }
+}
+
+/// Apply `mask` to a batch; `None` when it panicked (the batch is dropped).
+fn mask_spans(
+    mask: &SpanMaskFn,
+    spans: Vec<SpanData>,
+    resource: Option<&Resource>,
+) -> Option<Vec<SpanData>> {
+    let mut batch: Vec<MaskableSpan> = spans
+        .into_iter()
+        .filter(|span| span.span_context.is_valid())
+        .map(|span| MaskableSpan {
+            span,
+            resource: resource.cloned(),
+        })
+        .collect();
+    if catch_unwind(AssertUnwindSafe(|| mask(&mut batch))).is_err() {
+        tracing::error!(
+            spans = batch.len(),
+            "mask_otel_spans panicked; export batch dropped"
+        );
+        return None;
+    }
+    Some(
+        batch
+            .into_iter()
+            .map(|MaskableSpan { mut span, .. }| {
+                span.attributes.retain(|kv| !kv.key.as_str().is_empty());
+                span.attributes = dedupe_last_wins(span.attributes);
+                span
+            })
+            .collect(),
+    )
+}
+
+/// A [`SpanExporter`] set with
+/// [`TracingOptions::with_span_exporter`](super::TracingOptions::with_span_exporter),
+/// shared by clones of the options.
+#[derive(Clone)]
+pub struct SharedSpanExporter(Arc<dyn DynSpanExporter>);
+
+impl SharedSpanExporter {
+    /// Wrap `exporter`.
+    pub fn new<E: SpanExporter + 'static>(exporter: E) -> Self {
+        Self(Arc::new(Locked(tokio::sync::Mutex::new(exporter))))
+    }
+}
+
+impl fmt::Debug for SharedSpanExporter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("SharedSpanExporter").field(&self.0).finish()
+    }
+}
+
+/// Object-safe [`SpanExporter`]; the export task is its only caller.
+trait DynSpanExporter: Send + Sync + fmt::Debug {
+    fn export(&self, batch: Vec<SpanData>) -> BoxFuture<'_, OTelSdkResult>;
+    fn set_resource<'a>(&'a self, resource: &'a Resource) -> BoxFuture<'a, ()>;
+    fn force_flush(&self) -> BoxFuture<'_, OTelSdkResult>;
+    fn shutdown(&self) -> BoxFuture<'_, OTelSdkResult>;
+}
+
+/// `set_resource` takes `&mut self`, so the exporter sits behind an async
+/// mutex (uncontended: one export task per tracer).
+#[derive(Debug)]
+struct Locked<E>(tokio::sync::Mutex<E>);
+
+impl<E: SpanExporter + 'static> DynSpanExporter for Locked<E> {
+    fn export(&self, batch: Vec<SpanData>) -> BoxFuture<'_, OTelSdkResult> {
+        Box::pin(async move { self.0.lock().await.export(batch).await })
+    }
+
+    fn set_resource<'a>(&'a self, resource: &'a Resource) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.0.lock().await.set_resource(resource) })
+    }
+
+    fn force_flush(&self) -> BoxFuture<'_, OTelSdkResult> {
+        Box::pin(async move { self.0.lock().await.force_flush() })
+    }
+
+    fn shutdown(&self) -> BoxFuture<'_, OTelSdkResult> {
+        Box::pin(async move { self.0.lock().await.shutdown() })
+    }
+}
 
 /// Message from the processor and the tracer to the export task.
 pub(crate) enum Command {
@@ -34,10 +228,26 @@ pub(crate) struct ExportTask {
     pub(crate) flush_at: usize,
     pub(crate) flush_interval: Duration,
     pub(crate) max_batch_bytes: usize,
+    pub(crate) compression: Compression,
+    /// Path of the OTLP endpoint, relative to the base URL.
+    pub(crate) export_path: String,
+    pub(crate) mask: Option<SpanMaskFn>,
+    /// Receives the spans instead of the Langfuse endpoint.
+    pub(crate) exporter: Option<SharedSpanExporter>,
+    /// Whether `exporter` was given the provider's resource.
+    pub(crate) exporter_has_resource: bool,
+}
+
+/// The export path of `configured` (`TracingOptions::traces_export_path`).
+pub(crate) fn export_path(configured: Option<&str>) -> String {
+    match configured.map(|path| path.trim().trim_start_matches('/')) {
+        Some(path) if !path.is_empty() => path.to_owned(),
+        _ => OTEL_TRACES_PATH.trim_start_matches('/').to_owned(),
+    }
 }
 
 impl ExportTask {
-    pub(crate) async fn run(self, mut commands: mpsc::Receiver<Command>) {
+    pub(crate) async fn run(mut self, mut commands: mpsc::Receiver<Command>) {
         let mut queued: Vec<SpanData> = Vec::new();
         let mut ticker = tokio::time::interval(self.flush_interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -53,6 +263,11 @@ impl ExportTask {
                     }
                     Some(Command::Flush(ack)) => {
                         self.export(std::mem::take(&mut queued)).await;
+                        if let Some(exporter) = &self.exporter
+                            && let Err(err) = exporter.0.force_flush().await
+                        {
+                            tracing::warn!(error = %err, "span exporter failed to flush");
+                        }
                         if let Some(ack) = ack {
                             let _ = ack.send(());
                         }
@@ -63,6 +278,7 @@ impl ExportTask {
                             queued.push(*span);
                         }
                         self.export(std::mem::take(&mut queued)).await;
+                        self.shutdown_exporter().await;
                         commands.close();
                         if let Some(ack) = ack {
                             let _ = ack.send(());
@@ -71,6 +287,7 @@ impl ExportTask {
                     }
                     None => {
                         self.export(std::mem::take(&mut queued)).await;
+                        self.shutdown_exporter().await;
                         return;
                     }
                 },
@@ -83,14 +300,51 @@ impl ExportTask {
         }
     }
 
-    async fn export(&self, mut spans: Vec<SpanData>) {
+    async fn shutdown_exporter(&self) {
+        if let Some(exporter) = &self.exporter
+            && let Err(err) = exporter.0.shutdown().await
+        {
+            tracing::warn!(error = %err, "span exporter failed to shut down");
+        }
+    }
+
+    async fn export(&mut self, mut spans: Vec<SpanData>) {
         if spans.is_empty() {
             return;
+        }
+        if self.media_upload || self.mask.is_some() {
+            for span in &mut spans {
+                span.attributes = dedupe_last_wins(std::mem::take(&mut span.attributes));
+            }
         }
         if self.media_upload {
             spans.iter_mut().for_each(|span| self.upload_media(span));
         }
+        if let Some(mask) = &self.mask {
+            match mask_spans(mask, spans, self.resource.get()) {
+                Some(masked) => spans = masked,
+                None => return,
+            }
+            if spans.is_empty() {
+                return;
+            }
+        }
+        if let Some(exporter) = &self.exporter {
+            if let Some(resource) = self.resource.get().filter(|_| !self.exporter_has_resource) {
+                exporter.0.set_resource(resource).await;
+                self.exporter_has_resource = true;
+            }
+            let count = spans.len();
+            match exporter.0.export(spans).await {
+                Ok(()) => tracing::debug!(spans = count, "exported spans with the custom exporter"),
+                Err(err) => {
+                    tracing::warn!(spans = count, error = %err, "custom span exporter failed")
+                }
+            }
+            return;
+        }
         let resource = resource_attributes(self.resource.get());
+        let gzip = self.compression == Compression::Gzip;
         for batch in split_by_size(
             spans.iter().map(to_otel_span).collect(),
             &spans,
@@ -105,7 +359,12 @@ impl ExportTask {
                     scope_spans: batch,
                 }],
             };
-            if let Err(err) = self.client.ingestion.ingest_traces(&request).await {
+            let sent = self
+                .client
+                .ingestion
+                .export_traces(&request, &self.export_path, gzip)
+                .await;
+            if let Err(err) = sent {
                 tracing::warn!(spans = count, error = %err, "failed to export spans to Langfuse");
             } else {
                 tracing::debug!(spans = count, "exported spans to Langfuse");
@@ -115,12 +374,12 @@ impl ExportTask {
 }
 
 impl ExportTask {
-    /// Replace base64 media in the string attributes of `span` by reference
-    /// strings and queue the uploads, linked to the span's observation.
+    /// Replace base64 media in the string attributes of `span` (already
+    /// de-duplicated) by reference strings and queue the uploads, linked to
+    /// the span's observation.
     fn upload_media(&self, span: &mut SpanData) {
         let trace_id = span.span_context.trace_id().to_string();
         let span_id = span.span_context.span_id().to_string();
-        span.attributes = dedupe_last_wins(std::mem::take(&mut span.attributes));
         for kv in &mut span.attributes {
             let mut found = Vec::new();
             match &mut kv.value {
@@ -318,5 +577,19 @@ fn to_any_value(value: &OtelValue) -> OtelAnyValue {
             other => OtelAnyValue::string(other.to_string()),
         },
         other => OtelAnyValue::string(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_path_defaults_and_drops_leading_slashes() {
+        assert_eq!(export_path(None), "api/public/otel/v1/traces");
+        assert_eq!(export_path(Some("")), "api/public/otel/v1/traces");
+        assert_eq!(export_path(Some(" / ")), "api/public/otel/v1/traces");
+        assert_eq!(export_path(Some("//proxy/traces")), "proxy/traces");
+        assert_eq!(export_path(Some("otel")), "otel");
     }
 }

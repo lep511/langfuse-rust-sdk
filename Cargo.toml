@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-sdk"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 description = "Rust SDK for the Langfuse LLM observability API"
 license = "MIT"
@@ -15,7 +15,7 @@ categories = ["api-bindings", "development-tools"]
 members = ["macros"]
 
 [dependencies]
-langfuse-rust-sdk-macros = { version = "=0.8.0", path = "macros", optional = true }
+langfuse-rust-sdk-macros = { version = "=0.9.0", path = "macros", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
@@ -34,6 +34,8 @@ sha2 = "0.11.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 opentelemetry = { version = "0.33", default-features = false, features = ["trace"], optional = true }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"], optional = true }
+# `otel`: gzip compression of OTLP exports (reqwest's `gzip` feature only decodes responses).
+flate2 = { version = "1", optional = true }
 # `tracing-layer`: the `tracing-opentelemetry` release built on `opentelemetry` 0.33.
 tracing-opentelemetry = { version = "0.34", default-features = false, optional = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"], optional = true }
@@ -47,7 +49,7 @@ all-features = true
 [features]
 unstable = []
 # Native tracing on OpenTelemetry: observations, context propagation and batched export.
-otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "tokio/sync"]
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:flate2", "tokio/sync"]
 # Bridge from the `tracing` crate (`otel::tracing_layer`), e.g. for rig's `gen_ai.*` spans.
 tracing-layer = ["otel", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
 # The `#[observe]` attribute (`langfuse_rust_sdk::observe`).
@@ -73,6 +75,10 @@ required-features = ["unstable"]
 
 [[example]]
 name = "otel_tracing"
+required-features = ["otel"]
+
+[[example]]
+name = "otel_export_options"
 required-features = ["otel"]
 
 [[example]]

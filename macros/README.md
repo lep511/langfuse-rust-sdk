@@ -6,5 +6,5 @@ Do not depend on this crate directly: enable the `macros` feature of `langfuse-r
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.8", features = ["macros"] }
+langfuse-rust-sdk = { version = "0.9", features = ["macros"] }
 ```

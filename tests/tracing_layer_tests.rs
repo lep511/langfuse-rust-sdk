@@ -39,7 +39,7 @@ async fn exported(server: &MockServer) -> Vec<(String, Value)> {
         if request.url.path() != OTEL_PATH {
             continue;
         }
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = body_json(&request);
         for resource_spans in body["resourceSpans"].as_array().unwrap() {
             for scope_spans in resource_spans["scopeSpans"].as_array().unwrap() {
                 let scope = scope_spans["scope"]["name"].as_str().unwrap().to_owned();

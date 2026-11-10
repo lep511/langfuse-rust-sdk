@@ -79,6 +79,14 @@
 //! [`LangfuseClient::run_batched_evaluation`] scores observations already
 //! stored in Langfuse with the same evaluators (see [`batch_evaluation`]).
 //!
+//! # Logging
+//!
+//! The SDK logs through the [`tracing`] crate (the Python SDK's
+//! `LANGFUSE_DEBUG`): requests, retries and exports at `debug`, dropped data
+//! and failures at `warn` and `error`. Nothing is printed until the
+//! application installs a subscriber, e.g. `tracing_subscriber::fmt()` with
+//! an `EnvFilter` and `RUST_LOG=langfuse_rust_sdk=debug`.
+//!
 //! # Error handling
 //!
 //! Every method returns `Result<T, `[`LangfuseError`]`>`.  HTTP status codes
@@ -99,7 +107,8 @@
 //! # }
 //! ```
 #![warn(missing_docs)]
-/// API client modules — one per resource group.
+// Documented by its inner `//!` docs: outer docs here would be merged with
+// them and resolved in this module's scope.
 pub mod api;
 /// SDK configuration and builder.
 pub mod config;
@@ -365,8 +374,13 @@ impl LangfuseClient {
         let prompt_cache = Arc::new(prompt_cache::PromptCache::new(config.prompt_cache_ttl));
         let public_key: Arc<str> = Arc::from(config.public_key.as_str());
         let score_queue = config.score_queue.clone();
+        let media_upload_concurrency = config.media_upload_concurrency;
         let http = Arc::new(HttpClient::new(config)?);
-        let background = Arc::new(background::Background::new(Arc::clone(&http), score_queue));
+        let background = Arc::new(background::Background::new(
+            Arc::clone(&http),
+            score_queue,
+            media_upload_concurrency,
+        ));
         Ok(Self::assemble(
             http,
             prompt_cache,

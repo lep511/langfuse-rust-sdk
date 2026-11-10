@@ -112,18 +112,20 @@ mod tracing_layer;
 
 #[cfg(feature = "macros")]
 pub use __observe::ENV_OBSERVE_IO_CAPTURE_ENABLED;
+pub use exporter::{MaskableSpan, SharedSpanExporter};
 pub use observation::{
     Level, Observation, ObservationType, TraceContext, current_observation_id, current_trace_id,
     in_trace,
 };
 pub use options::{
-    ENV_FLUSH_AT, ENV_FLUSH_INTERVAL, ENV_MAX_BATCH_SIZE_BYTES, ENV_MEDIA_UPLOAD_ENABLED,
-    ENV_RELEASE, ENV_SAMPLE_RATE, ENV_TRACING_ENABLED, ENV_TRACING_ENVIRONMENT, ExportFilter,
-    MaskFn, TracingOptions,
+    Compression, ENV_FLUSH_AT, ENV_FLUSH_INTERVAL, ENV_MAX_BATCH_SIZE_BYTES,
+    ENV_MEDIA_UPLOAD_ENABLED, ENV_OTEL_COMPRESSION, ENV_OTEL_TRACES_EXPORT_PATH, ENV_RELEASE,
+    ENV_SAMPLE_RATE, ENV_TRACING_ENABLED, ENV_TRACING_ENVIRONMENT, ExportFilter, MaskFn,
+    SpanMaskFn, TracingOptions,
 };
 pub use processor::{
-    KNOWN_LLM_INSTRUMENTATION_SCOPE_PREFIXES, LANGFUSE_TRACER_NAME, is_default_export_span,
-    is_genai_span, is_known_llm_instrumentor, is_langfuse_span,
+    KNOWN_LLM_INSTRUMENTATION_SCOPE_PREFIXES, LANGFUSE_TRACER_NAME, LangfuseSpanProcessor,
+    is_default_export_span, is_genai_span, is_known_llm_instrumentor, is_langfuse_span,
 };
 pub use propagation::{PromptLink, PropagatedAttributes, propagate_attributes};
 pub use tracer::LangfuseTracer;

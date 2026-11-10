@@ -7,7 +7,7 @@ mod common;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use common::{PUBLIC_KEY, SECRET_KEY, TS, json};
+use common::{PUBLIC_KEY, SECRET_KEY, TS, body_bytes, json};
 use langfuse_rust_sdk::blocking::LangfuseClient;
 use langfuse_rust_sdk::models::scores::{CreateScoreRequest, CreateScoreValue};
 use langfuse_rust_sdk::pagination::PageParams;
@@ -174,7 +174,7 @@ fn the_tracer_exports_from_synchronous_code() {
     let exports = setup.requests("/api/public/otel/v1/traces");
     let body = exports
         .iter()
-        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .map(|r| String::from_utf8_lossy(&body_bytes(r)).into_owned())
         .collect::<String>();
     assert!(
         body.contains("sync-root") && body.contains("sync-child"),

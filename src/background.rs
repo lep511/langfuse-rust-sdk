@@ -10,6 +10,8 @@ use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use futures_util::StreamExt as _;
+use futures_util::stream::FuturesUnordered;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
@@ -37,16 +39,23 @@ enum MediaCommand {
 pub(crate) struct Background {
     http: Arc<HttpClient>,
     options: ScoreQueueOptions,
+    /// Media uploads run at the same time.
+    media_concurrency: usize,
     scores: Mutex<Option<mpsc::Sender<ScoreCommand>>>,
     media: Mutex<Option<mpsc::Sender<MediaCommand>>>,
     shut_down: AtomicBool,
 }
 
 impl Background {
-    pub(crate) fn new(http: Arc<HttpClient>, options: ScoreQueueOptions) -> Self {
+    pub(crate) fn new(
+        http: Arc<HttpClient>,
+        options: ScoreQueueOptions,
+        media_concurrency: usize,
+    ) -> Self {
         Self {
             http,
             options,
+            media_concurrency: media_concurrency.max(1),
             scores: Mutex::new(None),
             media: Mutex::new(None),
             shut_down: AtomicBool::new(false),
@@ -90,7 +99,10 @@ impl Background {
         let client = MediaClient {
             http: Arc::clone(&self.http),
         };
-        let Some(sender) = start(&self.media, MEDIA_QUEUE_SIZE, |rx| run_media(client, rx)) else {
+        let concurrency = self.media_concurrency;
+        let Some(sender) = start(&self.media, MEDIA_QUEUE_SIZE, |rx| {
+            run_media(client, concurrency, rx)
+        }) else {
             tracing::error!(
                 media = media.media_id(),
                 "media is uploaded by a Tokio task outside of any runtime; upload dropped"
@@ -297,29 +309,47 @@ async fn send_scores(http: &HttpClient, batch: Vec<Value>) {
     }
 }
 
-async fn run_media(client: MediaClient, mut commands: mpsc::Receiver<MediaCommand>) {
-    while let Some(command) = commands.recv().await {
-        match command {
-            MediaCommand::Upload(job) => {
-                let (media, target) = *job;
-                if let Err(err) = media.upload_with(&client, &target).await {
-                    tracing::warn!(media = media.media_id(), error = %err, "media upload failed");
+async fn run_media(
+    client: MediaClient,
+    concurrency: usize,
+    mut commands: mpsc::Receiver<MediaCommand>,
+) {
+    let mut uploads = FuturesUnordered::new();
+    loop {
+        tokio::select! {
+            // Take new work only while below the limit; queued uploads wait in
+            // the channel.
+            command = commands.recv(), if uploads.len() < concurrency => match command {
+                Some(MediaCommand::Upload(job)) => uploads.push(upload(&client, *job)),
+                Some(MediaCommand::Flush(ack)) => {
+                    // Every upload queued before the flush has been taken.
+                    while uploads.next().await.is_some() {}
+                    let _ = ack.send(());
                 }
-            }
-            MediaCommand::Flush(ack) => {
-                let _ = ack.send(());
-            }
-            MediaCommand::Shutdown(ack) => {
-                while let Ok(MediaCommand::Upload(job)) = commands.try_recv() {
-                    let (media, target) = *job;
-                    if let Err(err) = media.upload_with(&client, &target).await {
-                        tracing::warn!(media = media.media_id(), error = %err, "media upload failed");
+                Some(MediaCommand::Shutdown(ack)) => {
+                    while let Ok(MediaCommand::Upload(job)) = commands.try_recv() {
+                        if uploads.len() >= concurrency {
+                            uploads.next().await;
+                        }
+                        uploads.push(upload(&client, *job));
                     }
+                    while uploads.next().await.is_some() {}
+                    commands.close();
+                    let _ = ack.send(());
+                    return;
                 }
-                commands.close();
-                let _ = ack.send(());
-                return;
-            }
+                None => {
+                    while uploads.next().await.is_some() {}
+                    return;
+                }
+            },
+            Some(()) = uploads.next(), if !uploads.is_empty() => {}
         }
+    }
+}
+
+async fn upload(client: &MediaClient, (media, target): (LangfuseMedia, MediaTarget)) {
+    if let Err(err) = media.upload_with(client, &target).await {
+        tracing::warn!(media = media.media_id(), error = %err, "media upload failed");
     }
 }

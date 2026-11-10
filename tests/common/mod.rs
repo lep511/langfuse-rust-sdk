@@ -44,9 +44,31 @@ pub async fn single_request(server: &MockServer) -> Request {
     requests.remove(0)
 }
 
-/// Request body parsed as JSON.
+/// Request body parsed as JSON (gunzipped first if `Content-Encoding: gzip`).
 pub fn body_json(request: &Request) -> Value {
-    serde_json::from_slice(&request.body).expect("request body is JSON")
+    serde_json::from_slice(&body_bytes(request)).expect("request body is JSON")
+}
+
+/// Request body, gunzipped if it was sent with `Content-Encoding: gzip`.
+pub fn body_bytes(request: &Request) -> Vec<u8> {
+    let gzipped = request
+        .headers
+        .get("content-encoding")
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"gzip"));
+    if !gzipped {
+        return request.body.clone();
+    }
+    #[cfg(feature = "otel")]
+    {
+        use std::io::Read as _;
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(request.body.as_slice())
+            .read_to_end(&mut out)
+            .expect("valid gzip body");
+        out
+    }
+    #[cfg(not(feature = "otel"))]
+    panic!("gzip bodies are only sent with the `otel` feature")
 }
 
 /// Query pairs of a request, in order, percent-decoded.

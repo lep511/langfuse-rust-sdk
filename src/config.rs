@@ -33,6 +33,9 @@ pub const ENV_FLUSH_AT: &str = "LANGFUSE_FLUSH_AT";
 pub const ENV_FLUSH_INTERVAL: &str = "LANGFUSE_FLUSH_INTERVAL";
 /// Environment variable with the maximum body size of one score batch, in bytes.
 pub const ENV_MAX_BATCH_SIZE_BYTES: &str = "LANGFUSE_MAX_BATCH_SIZE_BYTES";
+/// Environment variable with the number of media uploads run at the same time
+/// (the Python SDK's upload thread count).
+pub const ENV_MEDIA_UPLOAD_THREAD_COUNT: &str = "LANGFUSE_MEDIA_UPLOAD_THREAD_COUNT";
 
 /// Body size limit of `POST /api/public/scores`.
 const SCORES_BODY_LIMIT_BYTES: usize = 1_000_000;
@@ -107,6 +110,7 @@ pub struct ClientConfig {
     pub(crate) http_client: Option<reqwest::Client>,
     pub(crate) prompt_cache_ttl: Duration,
     pub(crate) score_queue: ScoreQueueOptions,
+    pub(crate) media_upload_concurrency: usize,
 }
 
 impl ClientConfig {
@@ -123,6 +127,7 @@ impl ClientConfig {
             http_client: None,
             prompt_cache_ttl: None,
             score_queue: None,
+            media_upload_concurrency: None,
         }
     }
 
@@ -157,6 +162,12 @@ impl ClientConfig {
     pub fn score_queue(&self) -> &ScoreQueueOptions {
         &self.score_queue
     }
+
+    /// Media uploads run at the same time by the background upload queue
+    /// (default: 1).
+    pub fn media_upload_concurrency(&self) -> usize {
+        self.media_upload_concurrency
+    }
 }
 
 /// Builder for [`ClientConfig`].
@@ -174,6 +185,7 @@ pub struct ConfigBuilder {
     http_client: Option<reqwest::Client>,
     prompt_cache_ttl: Option<Duration>,
     score_queue: Option<ScoreQueueOptions>,
+    media_upload_concurrency: Option<usize>,
 }
 
 impl ConfigBuilder {
@@ -191,6 +203,7 @@ impl ConfigBuilder {
     /// | `LANGFUSE_FLUSH_AT` | Queued scores that trigger a send (default: 15) |
     /// | `LANGFUSE_FLUSH_INTERVAL` | Score send interval in seconds (default: 1) |
     /// | `LANGFUSE_MAX_BATCH_SIZE_BYTES` | Maximum score batch body in bytes (default and maximum: 1,000,000) |
+    /// | `LANGFUSE_MEDIA_UPLOAD_THREAD_COUNT` | Media uploads run at the same time (default: 1) |
     ///
     /// Empty values count as unset. Missing keys and invalid numbers return
     /// [`LangfuseError::Config`]. The variables are
@@ -232,6 +245,10 @@ impl ConfigBuilder {
         }
         if queue != ScoreQueueOptions::default() {
             builder = builder.score_queue(queue);
+        }
+        if let Some(raw) = var(ENV_MEDIA_UPLOAD_THREAD_COUNT) {
+            builder =
+                builder.media_upload_concurrency(parse_count(ENV_MEDIA_UPLOAD_THREAD_COUNT, &raw)?);
         }
         Ok(builder)
     }
@@ -293,6 +310,14 @@ impl ConfigBuilder {
         self
     }
 
+    /// Number of media uploads the background queue runs at the same time
+    /// (default: 1). The queue uploads the media found in exported spans
+    /// (feature `otel`). `0` makes [`build`](Self::build) fail.
+    pub fn media_upload_concurrency(mut self, uploads: usize) -> Self {
+        self.media_upload_concurrency = Some(uploads);
+        self
+    }
+
     /// Send requests through this [`reqwest::Client`] instead of one built by
     /// the SDK (useful for proxies, custom TLS or sharing a connection pool).
     ///
@@ -325,6 +350,13 @@ impl ConfigBuilder {
                 "score batches are capped at the 1,000,000-byte limit of the endpoint"
             );
             score_queue.max_batch_bytes = SCORES_BODY_LIMIT_BYTES;
+        }
+
+        let media_upload_concurrency = self.media_upload_concurrency.unwrap_or(1);
+        if media_upload_concurrency == 0 {
+            return Err(LangfuseError::Config(
+                "Invalid media upload concurrency: it must be greater than 0".into(),
+            ));
         }
 
         let raw_url = self.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL);
@@ -361,6 +393,7 @@ impl ConfigBuilder {
             http_client: self.http_client,
             prompt_cache_ttl: self.prompt_cache_ttl.unwrap_or(DEFAULT_PROMPT_CACHE_TTL),
             score_queue,
+            media_upload_concurrency,
         })
     }
 }
@@ -411,6 +444,37 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         ConfigBuilder::from_lookup(|name| vars.get(name).cloned())
+    }
+
+    #[test]
+    fn media_upload_concurrency_from_env_and_builder() {
+        let config = from_vars(&KEYS).unwrap().build().unwrap();
+        assert_eq!(config.media_upload_concurrency(), 1);
+        let config = from_vars(&[
+            KEYS[0],
+            KEYS[1],
+            ("LANGFUSE_MEDIA_UPLOAD_THREAD_COUNT", "4"),
+        ])
+        .unwrap()
+        .build()
+        .unwrap();
+        assert_eq!(config.media_upload_concurrency(), 4);
+        for raw in ["0", "-1", "two"] {
+            let msg = config_error(from_vars(&[
+                KEYS[0],
+                KEYS[1],
+                ("LANGFUSE_MEDIA_UPLOAD_THREAD_COUNT", raw),
+            ]));
+            assert!(
+                msg.contains("LANGFUSE_MEDIA_UPLOAD_THREAD_COUNT"),
+                "{raw}: {msg}"
+            );
+        }
+        let err = super::ClientConfig::builder("pk", "sk")
+            .media_upload_concurrency(0)
+            .build()
+            .unwrap_err();
+        assert!(matches!(err, LangfuseError::Config(msg) if msg.contains("media upload")));
     }
 
     fn config_error(result: Result<ConfigBuilder, LangfuseError>) -> String {

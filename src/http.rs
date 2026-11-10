@@ -223,6 +223,10 @@ pub(crate) struct CallOptions<'a> {
     /// Whether the request can be repeated without duplicating its effect,
     /// instead of deciding from the HTTP method.
     pub idempotent: Option<bool>,
+    /// Send the JSON body gzip-compressed with `Content-Encoding: gzip`
+    /// (compressed once, before the first attempt).
+    #[cfg(feature = "otel")]
+    pub gzip: bool,
 }
 
 /// Thin wrapper around [`reqwest::Client`] that adds authentication,
@@ -657,8 +661,20 @@ impl HttpClient {
         }
         let shared = &*self.shared;
         let url = self.build_url(path, query)?;
-        let headers = self.headers(options.headers);
+        #[allow(unused_mut)]
+        let mut headers = self.headers(options.headers);
         let body = self.json_body(body)?;
+        #[cfg(feature = "otel")]
+        let body = match body {
+            Some(json) if options.gzip => {
+                headers.insert(
+                    reqwest::header::CONTENT_ENCODING,
+                    HeaderValue::from_static("gzip"),
+                );
+                Some(gzip(&json)?)
+            }
+            other => other,
+        };
         let timeout = options
             .timeout
             .or(self.options.timeout)
@@ -735,6 +751,21 @@ impl HttpClient {
             attempt += 1;
         }
     }
+}
+
+/// `bytes` compressed as a gzip stream.
+#[cfg(feature = "otel")]
+fn gzip(bytes: &[u8]) -> Result<Vec<u8>, LangfuseError> {
+    use std::io::Write as _;
+
+    let mut encoder = flate2::write::GzEncoder::new(
+        Vec::with_capacity(bytes.len() / 4),
+        flate2::Compression::default(),
+    );
+    encoder
+        .write_all(bytes)
+        .and_then(|()| encoder.finish())
+        .map_err(|e| LangfuseError::Config(format!("Failed to gzip the request body: {e}")))
 }
 
 /// Whether repeating a request with `method` cannot duplicate its effect.

@@ -4,6 +4,76 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.9.0] - 2026-11-10
+
+Loose ends of tracing and configuration (Phase 6 of the Python SDK parity
+plan): compressed exports, span masking, a custom export path, tracer
+injection, concurrent media uploads and the remaining environment variables.
+
+### Added
+
+- **Gzip-compressed span exports**, on by default as in the Python SDK:
+  `TracingOptions::compression` (`otel::Compression::Gzip` or `None`,
+  `with_compression`) sends `Content-Encoding: gzip` (new optional
+  dependency `flate2`, part of the `otel` feature). `TracingOptions::from_env`
+  reads `LANGFUSE_OTEL_COMPRESSION`, then `OTEL_EXPORTER_OTLP_TRACES_COMPRESSION`
+  and `OTEL_EXPORTER_OTLP_COMPRESSION` (an invalid value falls through to the
+  next one, then gzip). `max_batch_bytes` still counts uncompressed JSON.
+  Verified against Langfuse Cloud.
+- **`TracingOptions::with_mask_otel_spans(|spans| ..)`**: a hook over every
+  export batch, after `should_export_span` and media upload, that edits span
+  attributes through `otel::MaskableSpan` (`attribute`, `set_attribute`,
+  `remove_attribute`, `attributes_mut`; IDs, name, parent, scope and resource
+  are read-only). A panic drops the whole batch, so unmasked data is never
+  sent. Type alias `otel::SpanMaskFn`.
+- `TracingOptions::traces_export_path` (`with_traces_export_path`,
+  `LANGFUSE_OTEL_TRACES_EXPORT_PATH`): export to another path under the base
+  URL, e.g. behind a proxy.
+- **Tracer injection:**
+  - `TracingOptions::with_id_generator(..)`: an OpenTelemetry `IdGenerator`
+    for the tracer's provider.
+  - `TracingOptions::with_span_exporter(..)` (`otel::SharedSpanExporter`):
+    send the spans to another OpenTelemetry `SpanExporter` instead of
+    Langfuse; media upload, masking and batching still apply.
+  - `otel::LangfuseSpanProcessor` is public: `LangfuseSpanProcessor::new(&client, options)`
+    starts the export, a clone goes into a `SdkTracerProvider` you build (with
+    your other processors and exporters), and
+    `LangfuseTracer::with_provider(&processor, provider)` creates the tracer
+    on it. Its `shutdown` stops the Langfuse export and leaves the provider
+    running.
+- **Concurrent media uploads**: `ConfigBuilder::media_upload_concurrency(n)`
+  and `LANGFUSE_MEDIA_UPLOAD_THREAD_COUNT` (default 1, as in the Python SDK);
+  `ClientConfig::media_upload_concurrency()`. Flushing waits for every upload
+  in flight.
+- `TracingOptions::from_env` takes the release from the commit variable of
+  common CI and hosting platforms when `LANGFUSE_RELEASE` is unset
+  (`RENDER_GIT_COMMIT`, `CI_COMMIT_SHA`, `CIRCLE_SHA1`, `SOURCE_VERSION`,
+  `TRAVIS_COMMIT`, `GIT_COMMIT`, `GITHUB_SHA`, `BITBUCKET_COMMIT`,
+  `BUILD_SOURCEVERSION`, `DRONE_COMMIT_SHA`, in that order), and
+  `OTEL_SDK_DISABLED=true` disables tracing, as the OpenTelemetry SDK under
+  the Python SDK does. Creating a tracer while it is set logs a warning.
+- Constants `otel::ENV_OTEL_COMPRESSION`, `otel::ENV_OTEL_TRACES_EXPORT_PATH`
+  and `config::ENV_MEDIA_UPLOAD_THREAD_COUNT`.
+- Documentation of debug logging (the Python SDK's `LANGFUSE_DEBUG`): the SDK
+  logs through `tracing`, e.g. `RUST_LOG=langfuse_rust_sdk=debug` with an
+  `EnvFilter` subscriber (README and crate docs).
+- Example `otel_export_options` (`--features otel`): gzip export, a provider
+  shared with another exporter and redaction with `mask_otel_spans`, checked
+  through the API; the trace is deleted at the end.
+
+### Changed
+
+- Span exports are gzip-compressed unless `Compression::None` is set. Proxies
+  in front of Langfuse must accept `Content-Encoding: gzip` (or set
+  `LANGFUSE_OTEL_COMPRESSION=none`).
+- `TracingOptions` has five new public fields; code that builds it with
+  `Default::default().with_*(..)` (the documented way) is unaffected.
+
+### Fixed
+
+- The `api` module documentation no longer repeats its summary, and
+  `cargo doc` builds without warnings (`redundant explicit link target`).
+
 ## [0.8.0] - 2026-11-10
 
 Ergonomics and integrations: `#[observe]`, OpenAI and rig integrations, skills,

@@ -1,25 +1,24 @@
 //! The Langfuse tracer: OpenTelemetry provider, processor and export task.
 
 use std::fmt;
-use std::sync::{Arc, OnceLock, PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 
-use opentelemetry::trace::{SpanKind, TraceContextExt, TraceId, TracerProvider as _};
+use opentelemetry::trace::{SpanId, SpanKind, TraceContextExt, TraceId, TracerProvider as _};
 use opentelemetry::{Context, InstrumentationScope, KeyValue};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::{
-    Sampler, SamplingDecision, SdkTracer, SdkTracerProvider, ShouldSample,
+    IdGenerator, Sampler, SamplingDecision, SdkTracer, SdkTracerProvider, ShouldSample,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 use super::attributes as attr;
-use super::exporter::{Command, ExportTask};
+use super::exporter::Command;
 use super::observation::{Observation, ObservationType, TraceContext};
 use super::options::{MaskFn, TracingOptions};
 use super::processor::{LANGFUSE_TRACER_NAME, LangfuseSpanProcessor};
 use crate::LangfuseClient;
 use crate::error::LangfuseError;
 use crate::models::scores::CreateScoreRequest;
-use crate::skills::serialize_skills;
 
 /// The tracer of [`LangfuseTracer::install_global`].
 static GLOBAL_TRACER: RwLock<Option<LangfuseTracer>> = RwLock::new(None);
@@ -66,115 +65,136 @@ pub(crate) struct TracerShared {
 pub struct LangfuseTracer {
     shared: Arc<TracerShared>,
     provider: SdkTracerProvider,
-    commands: Option<mpsc::Sender<Command>>,
+    processor: LangfuseSpanProcessor,
+    /// Whether the tracer built `provider` (and shuts it down).
+    owns_provider: bool,
 }
 
 impl fmt::Debug for LangfuseTracer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LangfuseTracer")
-            .field("enabled", &self.commands.is_some())
+            .field("enabled", &self.is_enabled())
             .finish_non_exhaustive()
     }
 }
 
+/// Generator of [`TracingOptions::id_generator`], shared with the options.
+#[derive(Debug)]
+struct SharedIdGenerator(Arc<dyn IdGenerator>);
+
+impl IdGenerator for SharedIdGenerator {
+    fn new_trace_id(&self) -> TraceId {
+        self.0.new_trace_id()
+    }
+
+    fn new_span_id(&self) -> SpanId {
+        self.0.new_span_id()
+    }
+}
+
 impl LangfuseTracer {
-    /// Create a tracer exporting through `client` (see [`LangfuseClient::tracer`]).
+    /// Create a tracer exporting through `client` (see [`LangfuseClient::tracer`]),
+    /// on a tracer provider of its own.
     ///
     /// Returns [`LangfuseError::Config`] for invalid options or when called
     /// outside a Tokio runtime with tracing enabled.
     pub fn new(client: &LangfuseClient, options: TracingOptions) -> Result<Self, LangfuseError> {
-        let TracingOptions {
-            environment,
-            release,
-            sample_rate,
-            enabled,
-            flush_at,
-            flush_interval,
-            max_queue_size,
-            max_batch_bytes,
-            mask,
-            should_export_span,
-            media_upload,
-            skills,
-        } = options;
-        let invalid = |msg: &str| {
-            Err(LangfuseError::Config(format!(
-                "Invalid tracing options: {msg}"
-            )))
-        };
-        if !(0.0..=1.0).contains(&sample_rate) {
-            return invalid("sample_rate must be between 0 and 1");
+        let processor = LangfuseSpanProcessor::new(client, options)?;
+        let provider = Self::own_provider(&processor);
+        Ok(Self::assemble(processor, provider, true))
+    }
+
+    /// Create a tracer on `provider`, a tracer provider you built with
+    /// `processor` among its span processors (see [`LangfuseSpanProcessor`]),
+    /// so the same provider also feeds other backends. Observations are
+    /// created with `provider`'s sampler, ID generator, span limits and
+    /// resource; [`TracingOptions::id_generator`] is ignored (with a warning),
+    /// and [`TracingOptions::sample_rate`] only applies to
+    /// [`score`](Self::score): give `provider` the matching
+    /// `Sampler::TraceIdRatioBased`. Environment and release are still
+    /// recorded on every observation.
+    ///
+    /// [`shutdown`](Self::shutdown) stops the Langfuse export but leaves
+    /// `provider` running; shut it down yourself. With tracing disabled,
+    /// `provider` is not used and the tracer records nothing.
+    ///
+    /// Returns [`LangfuseError::Config`] when `provider` was not built with
+    /// `processor` (no provider has given it its resource).
+    pub fn with_provider(
+        processor: &LangfuseSpanProcessor,
+        provider: SdkTracerProvider,
+    ) -> Result<Self, LangfuseError> {
+        if !processor.is_enabled() {
+            let provider = Self::own_provider(processor);
+            return Ok(Self::assemble(processor.clone(), provider, true));
         }
-        if flush_at == 0 || max_queue_size == 0 || max_batch_bytes == 0 || flush_interval.is_zero()
-        {
-            return invalid(
-                "flush_at, max_queue_size, max_batch_bytes and flush_interval must be greater than 0",
+        if !processor.is_registered() {
+            return Err(LangfuseError::Config(
+                "the tracer provider does not include the LangfuseSpanProcessor: add a clone of it with `with_span_processor` before `build`".into(),
+            ));
+        }
+        if processor.settings().id_generator.is_some() {
+            tracing::warn!(
+                "TracingOptions::id_generator is ignored with LangfuseTracer::with_provider; configure the ID generator on the tracer provider instead"
             );
         }
+        Ok(Self::assemble(processor.clone(), provider, false))
+    }
 
-        let public_key = client.public_key().to_owned();
+    /// The provider of [`new`](Self::new): resource with environment and
+    /// release, sampler and ID generator from the options.
+    fn own_provider(processor: &LangfuseSpanProcessor) -> SdkTracerProvider {
+        let settings = processor.settings();
         let mut resource = Resource::builder();
-        if let Some(environment) = &environment {
+        if let Some(environment) = &settings.environment {
             resource =
                 resource.with_attribute(KeyValue::new(attr::ENVIRONMENT, environment.clone()));
         }
-        if let Some(release) = &release {
+        if let Some(release) = &settings.release {
             resource = resource.with_attribute(KeyValue::new(attr::RELEASE, release.clone()));
         }
         let mut builder = SdkTracerProvider::builder().with_resource(resource.build());
-
-        let commands = if enabled {
-            let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
-                LangfuseError::Config(
-                    "LangfuseTracer must be created inside a Tokio runtime".into(),
-                )
-            })?;
-            let (sender, receiver) = mpsc::channel(max_queue_size);
-            let resource_cell = Arc::new(OnceLock::new());
-            builder = builder.with_span_processor(LangfuseSpanProcessor::new(
-                public_key.clone(),
-                should_export_span,
-                skills.as_deref().and_then(serialize_skills),
-                sender.clone(),
-                Arc::clone(&resource_cell),
-            ));
-            if sample_rate < 1.0 {
-                builder = builder.with_sampler(Sampler::TraceIdRatioBased(sample_rate));
+        if let Some(id_generator) = &settings.id_generator {
+            builder = builder.with_id_generator(SharedIdGenerator(Arc::clone(id_generator)));
+        }
+        if processor.is_enabled() {
+            builder = builder.with_span_processor(processor.clone());
+            if settings.sample_rate < 1.0 {
+                builder = builder.with_sampler(Sampler::TraceIdRatioBased(settings.sample_rate));
             }
-            let task = ExportTask {
-                client: client.clone(),
-                media_upload,
-                resource: resource_cell,
-                flush_at,
-                flush_interval,
-                max_batch_bytes,
-            };
-            runtime.spawn(task.run(receiver));
-            Some(sender)
         } else {
             builder = builder.with_sampler(Sampler::AlwaysOff);
-            None
-        };
+        }
+        builder.build()
+    }
 
-        let provider = builder.build();
+    fn assemble(
+        processor: LangfuseSpanProcessor,
+        provider: SdkTracerProvider,
+        owns_provider: bool,
+    ) -> Self {
+        let settings = processor.settings();
         let scope = InstrumentationScope::builder(LANGFUSE_TRACER_NAME)
             .with_version(env!("CARGO_PKG_VERSION"))
-            .with_attributes([KeyValue::new("public_key", public_key)])
+            .with_attributes([KeyValue::new(
+                "public_key",
+                processor.public_key().to_owned(),
+            )])
             .build();
         let tracer = provider.tracer_with_scope(scope);
-
-        Ok(Self {
+        Self {
             shared: Arc::new(TracerShared {
                 tracer,
-                client: client.clone(),
-                environment,
-                release,
-                mask,
-                sample_rate,
+                client: settings.client.clone(),
+                environment: settings.environment.clone(),
+                release: settings.release.clone(),
+                mask: settings.mask.clone(),
+                sample_rate: settings.sample_rate,
             }),
             provider,
-            commands,
-        })
+            processor,
+            owns_provider,
+        }
     }
 
     /// State shared with the observations of this tracer.
@@ -213,7 +233,7 @@ impl LangfuseTracer {
 
     /// Whether tracing is enabled (spans are exported and scores queued).
     pub fn is_enabled(&self) -> bool {
-        self.commands.is_some()
+        self.processor.is_enabled()
     }
 
     /// The OpenTelemetry tracer provider. Use it to get tracers for other
@@ -263,7 +283,7 @@ impl LangfuseTracer {
     /// Prefer this over [`LangfuseClient::score`] when
     /// [`sample_rate`](TracingOptions::sample_rate) is below `1.0`.
     pub fn score(&self, mut score: CreateScoreRequest) {
-        if self.commands.is_none() {
+        if !self.is_enabled() {
             tracing::debug!(score = %score.name, "tracing is disabled; score dropped");
             return;
         }
@@ -359,12 +379,14 @@ impl LangfuseTracer {
     /// [`LangfuseClient::shutdown`] to stop its background tasks too.
     pub async fn shutdown(&self) {
         self.send_and_wait(Command::Shutdown).await;
-        let _ = self.provider.shutdown();
+        if self.owns_provider {
+            let _ = self.provider.shutdown();
+        }
         self.shared.client.flush().await;
     }
 
     async fn send_and_wait(&self, command: fn(Option<oneshot::Sender<()>>) -> Command) {
-        let Some(commands) = &self.commands else {
+        let Some(commands) = self.processor.commands() else {
             return;
         };
         let (ack, done) = oneshot::channel();

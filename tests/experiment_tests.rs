@@ -92,7 +92,7 @@ async fn exported(server: &MockServer) -> Vec<Span> {
         if request.url.path() != OTEL_PATH {
             continue;
         }
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = body_json(&request);
         for resource in body["resourceSpans"].as_array().unwrap() {
             for scope in resource["scopeSpans"].as_array().unwrap() {
                 out.extend(scope["spans"].as_array().unwrap().iter().cloned().map(Span));
@@ -106,7 +106,7 @@ async fn sent_scores(server: &MockServer) -> Vec<Value> {
     let mut out = Vec::new();
     for request in server.received_requests().await.unwrap() {
         if request.url.path() == "/api/public/scores" {
-            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            let body: Value = body_json(&request);
             out.extend(body.as_array().unwrap().iter().cloned());
         }
     }

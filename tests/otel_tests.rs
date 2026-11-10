@@ -130,7 +130,7 @@ async fn export_requests(server: &MockServer) -> Vec<Value> {
         .unwrap()
         .into_iter()
         .filter(|r| r.url.path() == OTEL_PATH)
-        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .map(|r| body_json(&r))
         .collect()
 }
 
@@ -1210,7 +1210,7 @@ async fn media_requests(server: &MockServer) -> Vec<Value> {
         .unwrap()
         .into_iter()
         .filter(|r| r.url.path() == "/api/public/media")
-        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .map(|r| body_json(&r))
         .collect()
 }
 
@@ -1482,4 +1482,465 @@ async fn media_upload_can_be_disabled() {
         Some(data_uri)
     );
     assert!(media_requests(&server).await.is_empty());
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Export options: compression, path, span masking, injection, media
+// ═══════════════════════════════════════════════════════════════════════
+
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+use langfuse_rust_sdk::RetryPolicy;
+use langfuse_rust_sdk::otel::opentelemetry::trace::{SpanId, TraceId};
+use langfuse_rust_sdk::otel::opentelemetry_sdk::Resource;
+use langfuse_rust_sdk::otel::opentelemetry_sdk::error::OTelSdkResult;
+use langfuse_rust_sdk::otel::opentelemetry_sdk::trace::{
+    IdGenerator, SdkTracerProvider, SpanData, SpanExporter,
+};
+use langfuse_rust_sdk::otel::{Compression, LangfuseSpanProcessor};
+use wiremock::Request;
+
+async fn export_raw_requests(server: &MockServer, path: &str) -> Vec<Request> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.url.path() == path)
+        .collect()
+}
+
+/// Client on `server` with `base_path` appended to its URL, no retries.
+fn client_at(server: &MockServer, base_path: &str) -> ClientConfig {
+    ClientConfig::builder(PUBLIC_KEY, SECRET_KEY)
+        .base_url(format!("{}{base_path}", server.uri()))
+        .retry_policy(RetryPolicy {
+            max_retries: 0,
+            ..RetryPolicy::default()
+        })
+        .build()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn exports_are_gzipped_by_default() {
+    let (tracer, server) = setup(manual_flush()).await;
+    tracer
+        .start_observation("zipped", ObservationType::Span)
+        .end();
+    tracer.flush().await;
+
+    let requests = export_raw_requests(&server, OTEL_PATH).await;
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.headers.get("content-encoding").unwrap(), "gzip");
+    assert_eq!(
+        request.headers.get("content-type").unwrap(),
+        "application/json"
+    );
+    assert_eq!(
+        request.headers.get("x-langfuse-ingestion-version").unwrap(),
+        "4"
+    );
+    assert_eq!(&request.body[..2], &[0x1f, 0x8b], "gzip magic bytes");
+    assert_eq!(named(&exported(&server).await, "zipped").name(), "zipped");
+}
+
+#[tokio::test]
+async fn compression_none_sends_plain_json() {
+    let (tracer, server) = setup(manual_flush().with_compression(Compression::None)).await;
+    tracer
+        .start_observation("plain", ObservationType::Span)
+        .end();
+    tracer.flush().await;
+
+    let requests = export_raw_requests(&server, OTEL_PATH).await;
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].headers.get("content-encoding").is_none());
+    let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert!(body.to_string().contains("plain"));
+}
+
+#[tokio::test]
+async fn traces_export_path_replaces_the_endpoint_and_keeps_the_base_path() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/langfuse/proxy/otel"))
+        .respond_with(json(200, json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = LangfuseClient::new(client_at(&server, "/langfuse")).unwrap();
+    let tracer = client
+        .tracer(manual_flush().with_traces_export_path("/proxy/otel"))
+        .unwrap();
+    tracer
+        .start_observation("proxied", ObservationType::Span)
+        .end();
+    tracer.flush().await;
+
+    let requests = export_raw_requests(&server, "/langfuse/proxy/otel").await;
+    assert_eq!(requests.len(), 1);
+    assert!(body_json(&requests[0]).to_string().contains("proxied"));
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn mask_otel_spans_edits_the_attributes_of_each_batch() {
+    let batches = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&batches);
+    let options = manual_flush().with_mask_otel_spans(move |spans| {
+        seen.lock().unwrap().push(spans.len());
+        for span in spans {
+            assert!(span.resource().is_some());
+            assert!(span.span_id() != SpanId::INVALID);
+            if span
+                .remove_attribute("http.request.header.authorization")
+                .is_some()
+            {
+                span.set_attribute(KeyValue::new("security.redacted", true));
+            }
+            if span.name() == "child" {
+                assert!(span.parent_span_id().is_some());
+                assert_eq!(
+                    span.attribute("langfuse.observation.input")
+                        .map(|v| v.as_str().into_owned()),
+                    Some("secret question".to_owned())
+                );
+                span.set_attribute(KeyValue::new("langfuse.observation.input", "[masked]"));
+            }
+            // Duplicated keys export the last value; empty keys are dropped.
+            span.attributes_mut()
+                .push(KeyValue::new("batch.note", "first"));
+            span.attributes_mut()
+                .push(KeyValue::new("batch.note", "last"));
+            span.attributes_mut().push(KeyValue::new("", "dropped"));
+        }
+    });
+    let (tracer, server) = setup(options).await;
+
+    let root = tracer.start_observation("root", ObservationType::Span);
+    root.in_scope(async {
+        let other = tracer.provider().tracer("my-app");
+        let mut span = other.start("http-call");
+        span.set_attribute(KeyValue::new("gen_ai.system", "openai"));
+        span.set_attribute(KeyValue::new(
+            "http.request.header.authorization",
+            "Bearer sk-123",
+        ));
+        span.end();
+        let child = tracer.start_observation("child", ObservationType::Generation);
+        child.set_input("secret question");
+        child.end();
+    })
+    .await;
+    root.end();
+    tracer.flush().await;
+
+    assert_eq!(*batches.lock().unwrap(), [3]);
+    let spans = exported(&server).await;
+    let http = named(&spans, "http-call");
+    assert_eq!(http.attr("http.request.header.authorization"), None);
+    assert_eq!(http.attr("security.redacted"), Some(json!(true)));
+    assert_eq!(
+        named(&spans, "child").attr_str("langfuse.observation.input"),
+        Some("[masked]".into())
+    );
+    for span in &spans {
+        assert_eq!(span.attr_str("batch.note"), Some("last".into()));
+        assert_eq!(span.attr(""), None);
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_mask_drops_the_whole_batch() {
+    let options = manual_flush().with_mask_otel_spans(|spans| {
+        assert!(spans.iter().all(|s| s.name() != "secret"), "cannot mask");
+    });
+    let (tracer, server) = setup(options).await;
+
+    tracer
+        .start_observation("secret", ObservationType::Span)
+        .end();
+    tracer
+        .start_observation("sibling", ObservationType::Span)
+        .end();
+    tracer.flush().await;
+    assert!(export_requests(&server).await.is_empty());
+
+    tracer
+        .start_observation("public", ObservationType::Span)
+        .end();
+    tracer.flush().await;
+    let spans = exported(&server).await;
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].name(), "public");
+}
+
+#[derive(Debug, Default)]
+struct SequentialIds(AtomicU64);
+
+impl IdGenerator for SequentialIds {
+    fn new_trace_id(&self) -> TraceId {
+        TraceId::from_hex("0000000000000000000000000000abcd").unwrap()
+    }
+
+    fn new_span_id(&self) -> SpanId {
+        let n = self.0.fetch_add(1, Ordering::Relaxed) + 1;
+        SpanId::from_bytes(n.to_be_bytes())
+    }
+}
+
+#[tokio::test]
+async fn the_id_generator_creates_trace_and_span_ids() {
+    let (tracer, server) = setup(manual_flush().with_id_generator(SequentialIds::default())).await;
+    let root = tracer.start_observation("root", ObservationType::Span);
+    let child = root.start_child("child", ObservationType::Tool);
+    assert_eq!(root.trace_id(), "0000000000000000000000000000abcd");
+    assert_eq!(root.id(), "0000000000000001");
+    assert_eq!(child.id(), "0000000000000002");
+    child.end();
+    root.end();
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    assert_eq!(named(&spans, "child").parent_id(), Some("0000000000000001"));
+    assert!(
+        spans
+            .iter()
+            .all(|s| s.trace_id() == "0000000000000000000000000000abcd")
+    );
+}
+
+/// Exporter keeping spans in memory, counting flushes and shutdowns.
+#[derive(Debug, Clone, Default)]
+struct MemoryExporter {
+    spans: Arc<Mutex<Vec<SpanData>>>,
+    resource: Arc<Mutex<Option<Resource>>>,
+    flushes: Arc<AtomicUsize>,
+    shutdowns: Arc<AtomicUsize>,
+}
+
+impl MemoryExporter {
+    fn names(&self) -> Vec<String> {
+        self.spans
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|s| s.name.to_string())
+            .collect()
+    }
+}
+
+impl SpanExporter for MemoryExporter {
+    async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
+        self.spans.lock().unwrap().extend(batch);
+        Ok(())
+    }
+
+    fn force_flush(&self) -> OTelSdkResult {
+        self.flushes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn shutdown_with_timeout(&self, _timeout: Duration) -> OTelSdkResult {
+        self.shutdowns.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn set_resource(&mut self, resource: &Resource) {
+        *self.resource.lock().unwrap() = Some(resource.clone());
+    }
+}
+
+#[tokio::test]
+async fn a_custom_span_exporter_receives_the_masked_spans_instead_of_langfuse() {
+    let exporter = MemoryExporter::default();
+    let options = manual_flush()
+        .with_environment("staging")
+        .with_span_exporter(exporter.clone())
+        .with_mask_otel_spans(|spans| {
+            for span in spans {
+                span.set_attribute(KeyValue::new("masked", true));
+                span.attributes_mut().push(KeyValue::new("note", "first"));
+                span.attributes_mut().push(KeyValue::new("note", "last"));
+            }
+        });
+    let (tracer, server) = setup(options).await;
+
+    let span = tracer.start_observation("local", ObservationType::Span);
+    span.set_input(&format!("data:image/png;base64,{PNG_B64}"));
+    span.end();
+    tracer.flush().await;
+
+    assert_eq!(exporter.names(), ["local"]);
+    let exported_span = exporter.spans.lock().unwrap()[0].clone();
+    assert!(
+        exported_span
+            .attributes
+            .iter()
+            .any(|kv| kv.key.as_str() == "masked")
+    );
+    let notes: Vec<String> = exported_span
+        .attributes
+        .iter()
+        .filter(|kv| kv.key.as_str() == "note")
+        .map(|kv| kv.value.to_string())
+        .collect();
+    assert_eq!(notes, ["last"]);
+    // The base64 input reached the exporter as a media reference.
+    let input = exported_span
+        .attributes
+        .iter()
+        .find(|kv| kv.key.as_str() == "langfuse.observation.input")
+        .map(|kv| kv.value.to_string())
+        .unwrap();
+    assert!(input.starts_with("@@@langfuseMedia:"), "{input}");
+    let resource = exporter.resource.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        resource
+            .get(&"langfuse.environment".into())
+            .map(|v| v.to_string()),
+        Some("staging".into())
+    );
+    assert_eq!(exporter.flushes.load(Ordering::SeqCst), 1);
+    assert!(export_requests(&server).await.is_empty());
+
+    tracer.shutdown().await;
+    assert_eq!(exporter.shutdowns.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn with_provider_shares_the_provider_with_other_exporters() {
+    let (client, server) = test_client().await;
+    Mock::given(method("POST"))
+        .and(path(OTEL_PATH))
+        .respond_with(json(200, json!({})))
+        .mount(&server)
+        .await;
+    let processor =
+        LangfuseSpanProcessor::new(&client, manual_flush().with_environment("prod")).unwrap();
+    assert!(processor.is_enabled());
+    assert_eq!(processor.public_key(), PUBLIC_KEY);
+    let other = MemoryExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_span_processor(processor.clone())
+        .with_simple_exporter(other.clone())
+        .build();
+    let tracer = LangfuseTracer::with_provider(&processor, provider.clone()).unwrap();
+    assert!(tracer.is_enabled());
+
+    let root = tracer.start_observation("shared", ObservationType::Agent);
+    root.in_scope(propagate_attributes(
+        PropagatedAttributes::default().with_user_id("u-1"),
+        async {
+            tracer
+                .start_observation("inner", ObservationType::Tool)
+                .end();
+        },
+    ))
+    .await;
+    root.end();
+    assert_eq!(other.names(), ["inner", "shared"]);
+
+    tracer.flush().await;
+    let spans = exported(&server).await;
+    let inner = named(&spans, "inner");
+    assert_eq!(inner.attr_str("user.id"), Some("u-1".into()));
+    assert_eq!(inner.attr_str("langfuse.environment"), Some("prod".into()));
+    assert_eq!(inner.parent_id(), Some(named(&spans, "shared").id()));
+
+    // The Langfuse export stops; the provider keeps feeding the other exporter.
+    tracer.shutdown().await;
+    provider.tracer("after").start("after-shutdown").end();
+    assert!(other.names().contains(&"after-shutdown".to_owned()));
+    assert_eq!(other.shutdowns.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn with_provider_requires_the_processor_in_the_provider() {
+    let (client, _server) = test_client().await;
+    let processor = LangfuseSpanProcessor::new(&client, manual_flush()).unwrap();
+    let provider = SdkTracerProvider::builder().build();
+    match LangfuseTracer::with_provider(&processor, provider) {
+        Err(LangfuseError::Config(msg)) => assert!(msg.contains("LangfuseSpanProcessor"), "{msg}"),
+        other => panic!("expected a Config error, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_disabled_processor_needs_no_runtime_and_records_nothing() {
+    let config = ClientConfig::builder(PUBLIC_KEY, SECRET_KEY)
+        .build()
+        .unwrap();
+    let client = LangfuseClient::new(config).unwrap();
+    let processor =
+        LangfuseSpanProcessor::new(&client, TracingOptions::default().with_enabled(false)).unwrap();
+    assert!(!processor.is_enabled());
+    let other = MemoryExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(other.clone())
+        .build();
+    let tracer = LangfuseTracer::with_provider(&processor, provider).unwrap();
+    assert!(!tracer.is_enabled());
+    let span = tracer.start_observation("ignored", ObservationType::Span);
+    assert!(!span.is_recording());
+    span.end();
+    assert!(other.names().is_empty());
+}
+
+#[tokio::test]
+async fn media_uploads_run_concurrently() {
+    use base64::Engine as _;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(OTEL_PATH))
+        .respond_with(json(200, json!({})))
+        .mount(&server)
+        .await;
+    let data_uris: Vec<String> = (0..4u8)
+        .map(|i| {
+            let b64 = base64::engine::general_purpose::STANDARD.encode([i; 12]);
+            format!("data:image/png;base64,{b64}")
+        })
+        .collect();
+    for uri in &data_uris {
+        let item = LangfuseMedia::from_data_uri(uri).unwrap();
+        Mock::given(method("POST"))
+            .and(path("/api/public/media"))
+            .and(wiremock::matchers::body_partial_json(
+                json!({"sha256Hash": item.sha256_hash()}),
+            ))
+            .respond_with(
+                json(200, json!({"uploadUrl": null, "mediaId": item.media_id()}))
+                    .set_delay(Duration::from_millis(400)),
+            )
+            .mount(&server)
+            .await;
+    }
+    let config = ClientConfig::builder(PUBLIC_KEY, SECRET_KEY)
+        .base_url(server.uri())
+        .media_upload_concurrency(4)
+        .build()
+        .unwrap();
+    assert_eq!(config.media_upload_concurrency(), 4);
+    let client = LangfuseClient::new(config).unwrap();
+    let tracer = client.tracer(manual_flush()).unwrap();
+    for (i, uri) in data_uris.iter().enumerate() {
+        let span = tracer.start_observation(format!("image-{i}"), ObservationType::Span);
+        span.set_input(uri);
+        span.end();
+    }
+
+    let started = std::time::Instant::now();
+    tracer.flush().await;
+    let elapsed = started.elapsed();
+    assert_eq!(media_requests(&server).await.len(), 4);
+    // One at a time would take at least 4 × 400 ms.
+    assert!(
+        elapsed >= Duration::from_millis(400) && elapsed < Duration::from_millis(1200),
+        "flush took {elapsed:?}"
+    );
 }

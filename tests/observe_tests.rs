@@ -38,7 +38,7 @@ async fn exported(tracer: &LangfuseTracer, server: &MockServer) -> Vec<Value> {
         if request.url.path() != OTEL_PATH {
             continue;
         }
-        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let body: Value = body_json(&request);
         for resource_spans in body["resourceSpans"].as_array().unwrap() {
             for scope_spans in resource_spans["scopeSpans"].as_array().unwrap() {
                 out.extend(scope_spans["spans"].as_array().unwrap().iter().cloned());

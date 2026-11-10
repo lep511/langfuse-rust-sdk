@@ -63,7 +63,7 @@ The unstable APIs may change without notice upstream. Enable them with:
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.8", features = ["unstable"] }
+langfuse-rust-sdk = { version = "0.9", features = ["unstable"] }
 ```
 
 ### Cargo features
@@ -153,6 +153,7 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`observations`](examples/observations.rs) | List recent observations with a formatted table output |
 | [`otel_ingestion`](examples/otel_ingestion.rs) | Ingest an OpenTelemetry span with tags and print its URL in the UI (writes one trace) |
 | [`otel_tracing`](examples/otel_tracing.rs) | Trace a request with nested observations, user/session attributes and a score (`--features otel`, writes one trace) |
+| [`otel_export_options`](examples/otel_export_options.rs) | Gzip export, a provider shared with another exporter and `mask_otel_spans` redaction, checked through the API (`--features otel`, writes one trace and deletes it) |
 | [`media`](examples/media.rs) | Attach an image to a generation and resolve it back to a data URI (`--features otel`, writes a trace and media) |
 | [`error_handling`](examples/error_handling.rs) | Handle config errors, 404s, auth failures, and graceful fallbacks |
 | [`metrics_query`](examples/metrics_query.rs) | Query cost and tokens per model and a daily trend with the Metrics API (read-only) |
@@ -239,6 +240,23 @@ let health = quick.health.check().await?;
 `with_body_param` merges fields into JSON object bodies. Scores and media uploads queued in the
 background keep the options of the original client.
 
+### Debug logging
+
+The SDK logs through the [`tracing`](https://docs.rs/tracing) crate (the equivalent of the
+Python SDK's `LANGFUSE_DEBUG`): requests and retries, exports, dropped spans and scores, failed
+uploads. Nothing is printed until the application installs a subscriber; with
+`tracing-subscriber` (feature `env-filter`), `RUST_LOG=langfuse_rust_sdk=debug` shows the SDK's
+debug output:
+
+```rust
+tracing_subscriber::fmt()
+    .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+    .init();
+```
+
+Warnings and errors (failed exports, full queues, invalid settings read from the environment)
+use the `warn` and `error` levels, so `RUST_LOG=langfuse_rust_sdk=warn` keeps only those.
+
 ## Prompts
 
 `prompts.get_cached` serves prompts from an in-memory cache (shared by clones of the client):
@@ -284,7 +302,7 @@ are inserted as compact JSON.
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.8", features = ["otel"] }
+langfuse-rust-sdk = { version = "0.9", features = ["otel"] }
 ```
 
 A `LangfuseTracer` creates observations as OpenTelemetry spans and exports them in the
@@ -328,9 +346,22 @@ tracer.shutdown().await;   // export queued spans before exiting
   continues a trace started elsewhere.
 - **Options** (`TracingOptions::default().with_*(..)`, or `from_env()` with `LANGFUSE_TRACING_ENVIRONMENT`,
   `LANGFUSE_RELEASE`, `LANGFUSE_SAMPLE_RATE`, `LANGFUSE_TRACING_ENABLED`, `LANGFUSE_FLUSH_AT`,
-  `LANGFUSE_FLUSH_INTERVAL`, `LANGFUSE_OTEL_MAX_BATCH_SIZE_BYTES`): environment, release,
-  sampling, enabled, batching, `mask` (redacts input, output and metadata) and
-  `should_export_span`.
+  `LANGFUSE_FLUSH_INTERVAL`, `LANGFUSE_OTEL_MAX_BATCH_SIZE_BYTES`, `LANGFUSE_OTEL_COMPRESSION`,
+  `LANGFUSE_OTEL_TRACES_EXPORT_PATH`): environment, release, sampling, enabled, batching, `mask`
+  (redacts input, output and metadata) and `should_export_span`. Without `LANGFUSE_RELEASE`,
+  `from_env` takes the release from the commit variable of common CI platforms (`GITHUB_SHA`,
+  `CI_COMMIT_SHA`, ...), and `OTEL_SDK_DISABLED=true` disables tracing, as in the Python SDK.
+- **Export:** gzip-compressed by default (`with_compression(Compression::None)` sends plain
+  JSON; `from_env` also reads `OTEL_EXPORTER_OTLP_TRACES_COMPRESSION` and
+  `OTEL_EXPORTER_OTLP_COMPRESSION`). `with_traces_export_path(..)` changes the endpoint path
+  under the base URL, `with_mask_otel_spans(|spans| ..)` edits the attributes of every export
+  batch before it is sent (a panic drops the batch), `with_id_generator(..)` sets the trace and
+  span IDs, and `with_span_exporter(..)` sends the spans to another OpenTelemetry exporter
+  instead of Langfuse.
+- **Your own provider:** `LangfuseSpanProcessor::new(&client, options)` gives the Langfuse
+  processor; add a clone to a `SdkTracerProvider` that also feeds other backends and build the
+  tracer with `LangfuseTracer::with_provider(&processor, provider)` (see
+  `examples/otel_export_options.rs`).
 - **Other instrumentation:** `tracer.provider()` is a regular `SdkTracerProvider`. Spans of
   other libraries are exported when they have `gen_ai.*` attributes or come from a known LLM
   instrumentation scope (`is_default_export_span`), or whatever `should_export_span` accepts.
@@ -448,6 +479,8 @@ let resolved = client.media.resolve_references(&observation_input).await;
 
 With the `otel` feature you rarely upload by hand: put the media (or any base64 data URI) in the
 traced data, e.g. `span.set_input(&json!({"image": image}))`, and it is uploaded during export.
+Those uploads run one at a time; `ConfigBuilder::media_upload_concurrency(n)` (or
+`LANGFUSE_MEDIA_UPLOAD_THREAD_COUNT`) runs up to `n` at once.
 
 ## Datasets and experiments
 
