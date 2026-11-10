@@ -46,6 +46,9 @@ pub const OBSERVATION_COST_DETAILS: &str = "langfuse.observation.cost_details";
 pub const OBSERVATION_PROMPT_NAME: &str = "langfuse.observation.prompt.name";
 /// Version of the Langfuse prompt used by a generation (integer).
 pub const OBSERVATION_PROMPT_VERSION: &str = "langfuse.observation.prompt.version";
+/// Skills available to the observation (JSON array of
+/// [`SkillReference`](crate::skills::SkillReference)).
+pub const OBSERVATION_SKILLS_AVAILABLE: &str = "langfuse.observation.skills_available";
 
 /// Tracing environment (e.g. `production`).
 pub const ENVIRONMENT: &str = "langfuse.environment";

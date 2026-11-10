@@ -1,0 +1,5 @@
+error: invalid as_type "llm"; expected one of: span, generation, agent, tool, chain, retriever, embedding, evaluator, guardrail
+ --> tests/ui/observe/invalid_as_type.rs:3:21
+  |
+3 | #[observe(as_type = "llm")]
+  |                     ^^^^^

@@ -5,7 +5,7 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 ## Features
 
 - Covers all 120 operations of the Langfuse public API (`openapi.yml`); the 21 unstable ones are behind the `unstable` feature
-- Async-only API built on `reqwest` + `tokio`
+- Async API built on `reqwest` + `tokio`, plus a blocking client for programs without a runtime (feature `blocking`)
 - Typed models with `serde`, including tagged unions (`ScoreV3` on `dataType`, `Prompt` on `type`, `Evaluator` on `type`, ...)
 - Response enums tolerate new server values (`Unknown` variant)
 - Automatic retry with exponential backoff, jitter, and `Retry-After` support
@@ -19,6 +19,10 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 - Scores queued and sent in the background in batches (`client.score`)
 - Media attachments: upload, reference strings, resolution back to data URIs, and automatic upload of base64 media in traces and dataset items
 - Datasets with all their items (`client.get_dataset`), experiments on datasets or local data with item, composite and run evaluators (`tracer.run_experiment`, feature `otel`), and batch evaluation of stored observations (`client.run_batched_evaluation`)
+- `#[observe]` to trace plain functions, sync or async, including streams and iterators (feature `macros`)
+- Integrations: traced OpenAI calls through `async-openai` (feature `openai`) and a `tracing` bridge that records rig agents and `#[tracing::instrument]` spans (feature `tracing-layer`)
+- Skills discovery (`skills::discover_skills`) and the skills available to an agent on its spans
+- Per-request options on a client view (`client.with_options`): timeout, retries, headers, query and body parameters, response headers
 
 ## Supported Resources
 
@@ -59,8 +63,19 @@ The unstable APIs may change without notice upstream. Enable them with:
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.7", features = ["unstable"] }
+langfuse-rust-sdk = { version = "0.8", features = ["unstable"] }
 ```
+
+### Cargo features
+
+| Feature | Adds |
+|---|---|
+| `unstable` | The 21 `/api/public/unstable/*` operations |
+| `otel` | Tracing on OpenTelemetry (`otel` module), `run_experiment` |
+| `macros` | `#[observe]` (enables `otel`) |
+| `tracing-layer` | `otel::tracing_layer`, the bridge from the `tracing` crate (enables `otel`) |
+| `openai` | `openai::OpenAI`, traced `async-openai` 0.43 calls (enables `otel`) |
+| `blocking` | `blocking::LangfuseClient`, on an internal Tokio runtime |
 
 ## Quick Start
 
@@ -152,6 +167,10 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`organization_admin`](examples/organization_admin.rs) | Projects, members, API keys and blob storage exports (organization key, read-only) |
 | [`scim_users`](examples/scim_users.rs) | SCIM provider config and paginated user list (organization key, read-only) |
 | [`dashboards`](examples/dashboards.rs) | Build a dashboard with three widgets, pause so you can open it in the UI, then delete it (`--features unstable`) |
+| [`observe`](examples/observe.rs) | Trace an agent, a retriever, a streamed generation and a failing tool with `#[observe]`, with skills (`--features macros`, writes one trace) |
+| [`rig_tracing`](examples/rig_tracing.rs) | Trace a rig agent through `otel::tracing_layer` (`--features tracing-layer`, needs an OpenAI-compatible endpoint, writes one trace) |
+| [`openai_tracing`](examples/openai_tracing.rs) | Trace a chat completion, a streamed one and an embedding made with async-openai (`--features openai`, needs `OPENAI_API_KEY`, writes one trace) |
+| [`blocking`](examples/blocking.rs) | The blocking client from a plain `main`, with a per-request options view (`--features blocking`, read-only) |
 
 ## Configuration
 
@@ -195,6 +214,30 @@ let config = ClientConfig::builder("pk-lf-...", "sk-lf-...")
 
 A base URL with a path (`https://example.com/langfuse`) is kept as a prefix of every request.
 `LangfuseClient` is cheap to clone: clones share the connection pool, so move one into each task.
+
+### Per-request options
+
+`client.with_options(options)` returns a view of the client that applies `RequestOptions` to
+every request (the `request_options` of the Python SDK). It shares the pool, the prompt cache and
+the background queues, and views nest:
+
+```rust
+use langfuse_rust_sdk::RequestOptions;
+use std::time::Duration;
+
+let quick = client.with_options(
+    RequestOptions::default()
+        .with_timeout(Duration::from_secs(2))
+        .with_max_retries(0)                      // the retry rules stay those of the SDK
+        .with_header("x-request-source", "batch-job")
+        .with_query_param("debug", "1")
+        .with_response_hook(|response| println!("{} {:?}", response.status, response.headers)),
+);
+let health = quick.health.check().await?;
+```
+
+`with_body_param` merges fields into JSON object bodies. Scores and media uploads queued in the
+background keep the options of the original client.
 
 ## Prompts
 
@@ -241,7 +284,7 @@ are inserted as compact JSON.
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.7", features = ["otel"] }
+langfuse-rust-sdk = { version = "0.8", features = ["otel"] }
 ```
 
 A `LangfuseTracer` creates observations as OpenTelemetry spans and exports them in the
@@ -291,8 +334,14 @@ tracer.shutdown().await;   // export queued spans before exiting
 - **Other instrumentation:** `tracer.provider()` is a regular `SdkTracerProvider`. Spans of
   other libraries are exported when they have `gen_ai.*` attributes or come from a known LLM
   instrumentation scope (`is_default_export_span`), or whatever `should_export_span` accepts.
-  `#[tracing::instrument]` spans can be bridged with `tracing-opentelemetry` (see the `otel`
-  module docs).
+  `otel::tracing_layer(&tracer)` (feature `tracing-layer`) bridges the `tracing` crate.
+- **Existing traces:** `otel::in_trace(TraceContext, future)` attaches the observations started
+  in a scope to a trace (and parent observation) from elsewhere.
+- **Skills:** `TracingOptions::with_skills(discover_skills("skills"))` records the skills
+  available to the application on the spans of scopes with
+  `PropagatedAttributes::with_attach_skills(true)`; `with_skills_available(..)` sets them for one
+  scope. `discover_skills` reads the skill directories (one `SKILL.md` each) and the
+  `langfuse-skills.lock` versions like the Python SDK.
 - **Scores:** `observation.score(..)`, `observation.score_trace(..)`,
   `tracer.score_current_span(..)` and `tracer.score_current_trace(..)` queue scores on the
   client. `tracer.score(..)` queues any score but drops the ones whose trace is sampled out
@@ -303,6 +352,67 @@ tracer.shutdown().await;   // export queued spans before exiting
 - **Flushing:** `tracer.flush()` / `tracer.shutdown()` export the spans first, then flush the
   client's score and media queues (the export queues the media uploads), so one call covers
   everything the tracer produced.
+
+### `#[observe]` (feature `macros`)
+
+```rust
+use langfuse_rust_sdk::observe;
+use langfuse_rust_sdk::otel::Observation;
+
+#[observe(as_type = "retriever")]
+async fn search(query: &str) -> Vec<String> { /* ... */ }
+
+#[observe(name = "llm-call", as_type = "generation", skip(api_key))]
+async fn complete(prompt: String, api_key: &str) -> Result<String, MyError> {
+    if let Some(generation) = Observation::current() {
+        generation.set_model("gpt-4o");
+    }
+    // ...
+}
+
+tracer.install_global();   // used when no observation is current
+```
+
+Each call is an observation, child of the current one, with the arguments (by name, `self`
+left out) as input and the result as output; non-`Serialize` values are recorded as
+`"<type name>"`. An `Err` result, a panic or a dropped future marks it as an error. A function
+returning `impl Stream` or `impl Iterator` keeps its observation open until the stream ends.
+Options: `name`, `as_type`, `capture_input`, `capture_output` (default from
+`LANGFUSE_OBSERVE_DECORATOR_IO_CAPTURE_ENABLED`), `skip(..)`, `transform_to_string`.
+
+### rig and other `tracing` instrumentation (feature `tracing-layer`)
+
+```rust
+use tracing_subscriber::prelude::*;
+
+tracing_subscriber::registry().with(otel::tracing_layer(&tracer)).init();
+```
+
+[rig](https://docs.rs/rig-core) describes its LLM calls with `gen_ai.*` span fields: through the
+layer they become generations with model, token usage and, with `record_content_telemetry(true)`,
+input and output messages (verified against Langfuse Cloud). Spans started inside
+`observation.in_scope(..)` are its children, and observations started inside an entered `tracing`
+span are children of that span. rig-agent starts a new trace unless a `tracing` span is current:
+run the agent inside one (`.instrument(span)`). By default only `gen_ai.*` spans of the layer are
+exported; accept the others with `otel::is_tracing_layer_span`. See
+[`rig_tracing`](examples/rig_tracing.rs).
+
+### OpenAI (feature `openai`)
+
+```rust
+use langfuse_rust_sdk::openai::OpenAI;
+
+let openai = OpenAI::new(async_openai::Client::new(), &tracer);
+let response = openai.chat().with_name("summarize").create(request).await?;
+let stream = openai.chat().create_stream(request).await?;    // recorded when it ends
+let embedding = openai.embeddings().create(embedding_request).await?;
+let answer = openai.responses().with_prompt(&prompt).create(response_request).await?;
+```
+
+Chat completions, the Responses API (with or without streaming) and embeddings are recorded like
+in the Python SDK: messages, model parameters with their defaults, output, usage (Langfuse
+computes the cost), time to first token for streams, and errors with level `ERROR`. Built for
+`async-openai` 0.43.
 
 ## Scores in the background
 
@@ -399,6 +509,26 @@ println!("{result}");
 let next = result.resume_token;   // serializable; pass it to `with_resume_from`
 ```
 
+## Blocking client (feature `blocking`)
+
+```rust
+use langfuse_rust_sdk::blocking::LangfuseClient;
+use langfuse_rust_sdk::pagination::PageParams;
+
+let client = LangfuseClient::new(ClientConfig::from_env()?)?;   // no #[tokio::main]
+let prompt = client.prompts.get("summarizer")?;
+for dataset in client.datasets.list_pages(PageParams::default()).items() {
+    println!("{}", dataset?.name);
+}
+client.shutdown();   // send queued scores before exiting
+```
+
+Every API method has a blocking version, and `*_pages` methods return iterators. The client runs
+the async SDK on a Tokio runtime of its own (one worker thread, which also sends queued scores and
+exported spans), like `reqwest::blocking`; its methods panic when called inside an async runtime.
+`client.tracer(..)` returns a tracer with blocking `flush` and `shutdown`, and
+`client.block_on(..)` runs any async-only call.
+
 ## Pagination
 
 Every list method returning `Paginated<T>` or `CursorPaginated<T>` has a `*_pages` companion
@@ -469,13 +599,18 @@ src/
   lib.rs            — LangfuseClient, crate root, re-exports
   config.rs         — ClientConfig builder
   error.rs          — LangfuseError enum
-  http.rs           — HttpClient (reqwest wrapper with auth, retry, path encoding)
+  http.rs           — HttpClient (reqwest wrapper with auth, retry, path encoding), RequestOptions
   retry.rs          — RetryPolicy (exponential backoff + jitter)
   pagination.rs     — Paginated<T>, CursorPaginated<T>, query param types, Pages/Items streams
   ids.rs            — Trace and observation ID generation (random or seeded)
   prompt_cache.rs   — In-memory cache behind prompts.get_cached (crate-private)
   otel/             — Tracing on OpenTelemetry (feature `otel`): tracer, observations,
-                      propagation, span processor, batched exporter, run_experiment
+                      propagation, span processor, batched exporter, run_experiment,
+                      #[observe] runtime, tracing layer
+  skills.rs         — discover_skills and SkillReference
+  openai.rs         — Traced async-openai calls (feature `openai`)
+  blocking/         — Blocking client (feature `blocking`); api.rs is generated by
+                      scripts/generate_blocking.py
   media.rs          — LangfuseMedia, references, upload, media detection in traced data
   dataset.rs        — get_dataset and create_dataset_item (crate-private module)
   experiment.rs     — Evaluation, evaluator and task traits, experiment options and results
@@ -483,15 +618,16 @@ src/
   background.rs     — Score queue and media upload tasks of LangfuseClient (crate-private)
   models/           — Typed request/response structs for all resources
   api/              — Resource clients (one per API group)
-examples/           — 25 runnable examples covering all major features
-tests/              — wiremock HTTP tests (api_*), serde tests, config tests
-                      (572 tests in total with --all-features, 480 without)
+macros/             — langfuse-rust-sdk-macros: the #[observe] attribute (feature `macros`)
+examples/           — 29 runnable examples covering all major features
+tests/              — wiremock HTTP tests (api_*), serde tests, config tests, trybuild UI tests
+                      (638 tests in total with --all-features, 503 without)
 ```
 
 ## Requirements
 
 - Rust 1.99+ (edition 2024)
-- tokio runtime
+- tokio runtime (or the blocking client)
 
 ## License
 

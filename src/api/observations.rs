@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde::{Serialize, Serializer};
 
 use crate::error::LangfuseError;
-use crate::http::{HttpClient, RequestOptions};
+use crate::http::{CallOptions, HttpClient};
 use crate::models::observations::ObservationV2;
 use crate::pagination::{CursorPaginated, Pages, impl_cursor_query, paginate_cursor};
 
@@ -107,7 +107,7 @@ impl ObservationsClient {
     pub(crate) async fn list_with_options(
         &self,
         params: &ListObservationsParams,
-        options: RequestOptions<'_>,
+        options: CallOptions<'_>,
     ) -> Result<CursorPaginated<ObservationV2>, LangfuseError> {
         self.http
             .get_with_query_options("/api/public/v2/observations", params, options)

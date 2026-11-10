@@ -18,6 +18,7 @@ use langfuse_rust_sdk::otel::{
     LangfuseTracer, Level, Observation, ObservationType, PromptLink, PropagatedAttributes,
     TraceContext, TracingOptions, current_observation_id, current_trace_id, propagate_attributes,
 };
+use langfuse_rust_sdk::skills::SkillReference;
 use langfuse_rust_sdk::{ClientConfig, LangfuseClient, LangfuseError};
 use serde_json::{Value, json};
 use wiremock::matchers::{header, method, path};
@@ -745,6 +746,120 @@ async fn trace_context_continues_an_existing_trace() {
     let invalid = named(&spans, "invalid");
     assert_ne!(invalid.trace_id(), trace_id);
     assert!(invalid.attr("langfuse.internal.as_root").is_none());
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Skills
+// ═══════════════════════════════════════════════════════════════════════
+
+const SKILLS_KEY: &str = "langfuse.observation.skills_available";
+
+#[tokio::test]
+async fn configured_skills_are_attached_where_the_scope_asks_for_them() {
+    let catalog = [SkillReference::new("configured").with_version(2)];
+    let (tracer, server) = setup(manual_flush().with_skills(catalog.clone())).await;
+    let start = |name: &str| tracer.start_observation(name, ObservationType::Span).end();
+
+    start("default");
+    let attach = PropagatedAttributes::default().with_attach_skills(true);
+    propagate_attributes(attach, async {
+        start("enabled");
+        let detach = PropagatedAttributes::default().with_attach_skills(false);
+        propagate_attributes(detach, async {
+            start("disabled");
+            let explicit = PropagatedAttributes::default().with_skills_available([]);
+            propagate_attributes(explicit, async { start("explicit") }).await;
+        })
+        .await;
+        start("restored");
+    })
+    .await;
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    let configured = json!([{"name": "configured", "version": 2}]);
+    assert_eq!(named(&spans, "default").attr(SKILLS_KEY), None);
+    assert_eq!(
+        named(&spans, "enabled").attr_json(SKILLS_KEY),
+        Some(configured.clone())
+    );
+    assert_eq!(named(&spans, "disabled").attr(SKILLS_KEY), None);
+    assert_eq!(
+        named(&spans, "explicit").attr_str(SKILLS_KEY).as_deref(),
+        Some("[]")
+    );
+    assert_eq!(
+        named(&spans, "restored").attr_json(SKILLS_KEY),
+        Some(configured)
+    );
+}
+
+#[tokio::test]
+async fn span_skills_win_over_propagated_ones_which_win_over_configured_ones() {
+    let options = manual_flush()
+        .with_skills([SkillReference::new("configured")])
+        .with_should_export_span(|_| true);
+    let (tracer, server) = setup(options).await;
+    let other = tracer.provider().tracer("other-lib");
+    let root = tracer.start_observation("root", ObservationType::Agent);
+    let propagated = PropagatedAttributes::default()
+        .with_attach_skills(true)
+        .with_skills_available([SkillReference::new("propagated").with_field("source", "lock")])
+        // Skills never travel as baggage.
+        .with_baggage(true);
+    root.in_scope(propagate_attributes(propagated, async {
+        let keys: Vec<String> = Context::current()
+            .baggage()
+            .iter()
+            .map(|(k, _)| k.to_string())
+            .collect();
+        assert!(keys.iter().all(|k| !k.contains("skills")), "{keys:?}");
+        tracer
+            .start_observation("child", ObservationType::Tool)
+            .end();
+        other
+            .span_builder("direct")
+            .with_attributes([KeyValue::new(SKILLS_KEY, "[]")])
+            .start(&other)
+            .end();
+    }))
+    .await;
+    root.end();
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    let propagated = json!([{"name": "propagated", "source": "lock"}]);
+    // The current observation gets the propagated skills too.
+    assert_eq!(
+        named(&spans, "root").attr_json(SKILLS_KEY),
+        Some(propagated.clone())
+    );
+    assert_eq!(
+        named(&spans, "child").attr_json(SKILLS_KEY),
+        Some(propagated)
+    );
+    assert_eq!(
+        named(&spans, "direct").attr_str(SKILLS_KEY).as_deref(),
+        Some("[]")
+    );
+}
+
+#[tokio::test]
+async fn configured_skills_are_compact_json() {
+    let (tracer, server) =
+        setup(manual_flush().with_skills([SkillReference::new("configured")])).await;
+    let attach = PropagatedAttributes::default().with_attach_skills(true);
+    propagate_attributes(attach, async {
+        let span = tracer.start_observation("configured", ObservationType::Span);
+        span.end();
+    })
+    .await;
+    tracer.flush().await;
+    let spans = exported(&server).await;
+    assert_eq!(
+        named(&spans, "configured").attr_str(SKILLS_KEY).as_deref(),
+        Some(r#"[{"name":"configured"}]"#)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════

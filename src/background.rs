@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::api::media::MediaClient;
 use crate::config::ScoreQueueOptions;
-use crate::http::{HttpClient, RequestOptions};
+use crate::http::{CallOptions, HttpClient};
 use crate::media::{LangfuseMedia, MediaTarget};
 use crate::models::scores::{CreateScoreRequest, CreateScoresResponse};
 
@@ -271,9 +271,9 @@ async fn send_scores(http: &HttpClient, batch: Vec<Value>) {
     // Every queued score has an ID and the endpoint upserts by ID, so a
     // repeated batch does not duplicate scores: retry it like an idempotent
     // request.
-    let options = RequestOptions {
+    let options = CallOptions {
         idempotent: Some(true),
-        ..RequestOptions::default()
+        ..CallOptions::default()
     };
     match http
         .post_with_options::<CreateScoresResponse, _>("/api/public/scores", &batch, options)

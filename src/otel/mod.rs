@@ -95,6 +95,10 @@
 //!
 //! [`Context`]: opentelemetry::Context
 
+#[cfg(feature = "macros")]
+#[doc(hidden)]
+#[path = "observe.rs"]
+pub mod __observe;
 pub mod attributes;
 mod experiment;
 mod exporter;
@@ -103,9 +107,14 @@ mod options;
 mod processor;
 mod propagation;
 mod tracer;
+#[cfg(feature = "tracing-layer")]
+mod tracing_layer;
 
+#[cfg(feature = "macros")]
+pub use __observe::ENV_OBSERVE_IO_CAPTURE_ENABLED;
 pub use observation::{
     Level, Observation, ObservationType, TraceContext, current_observation_id, current_trace_id,
+    in_trace,
 };
 pub use options::{
     ENV_FLUSH_AT, ENV_FLUSH_INTERVAL, ENV_MAX_BATCH_SIZE_BYTES, ENV_MEDIA_UPLOAD_ENABLED,
@@ -118,6 +127,8 @@ pub use processor::{
 };
 pub use propagation::{PromptLink, PropagatedAttributes, propagate_attributes};
 pub use tracer::LangfuseTracer;
+#[cfg(feature = "tracing-layer")]
+pub use tracing_layer::{TRACING_LAYER_SCOPE, is_tracing_layer_span, tracing_layer};
 
 pub use opentelemetry;
 pub use opentelemetry_sdk;

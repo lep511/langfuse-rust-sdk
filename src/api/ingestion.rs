@@ -5,7 +5,7 @@ use std::sync::Arc;
 use reqwest::header::{HeaderMap, HeaderValue};
 
 use crate::error::LangfuseError;
-use crate::http::{HttpClient, RequestOptions};
+use crate::http::{CallOptions, HttpClient};
 use crate::models::ingestion::IngestTracesRequest;
 
 /// Ingestion data-model version the API requires from direct OTLP exporters.
@@ -32,10 +32,10 @@ impl IngestionClient {
             .post_no_response_with_options(
                 "/api/public/otel/v1/traces",
                 req,
-                RequestOptions {
+                CallOptions {
                     headers: Some(&headers),
                     idempotent: Some(true),
-                    ..RequestOptions::default()
+                    ..CallOptions::default()
                 },
             )
             .await

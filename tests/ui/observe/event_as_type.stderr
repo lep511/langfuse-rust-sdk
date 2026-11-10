@@ -1,0 +1,5 @@
+error: invalid as_type "event" (events have no duration: create them with `ObservationType::Event`); expected one of: span, generation, agent, tool, chain, retriever, embedding, evaluator, guardrail
+ --> tests/ui/observe/event_as_type.rs:3:21
+  |
+3 | #[observe(as_type = "event")]
+  |                     ^^^^^^^

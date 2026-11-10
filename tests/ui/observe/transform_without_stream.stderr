@@ -1,0 +1,5 @@
+error: #[observe] transform_to_string needs a function returning `impl Stream<Item = T>` or `impl Iterator<Item = T>`
+ --> tests/ui/observe/transform_without_stream.rs:7:33
+  |
+7 | #[observe(transform_to_string = join)]
+  |                                 ^^^^

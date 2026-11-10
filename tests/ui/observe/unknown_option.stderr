@@ -1,0 +1,5 @@
+error: unknown #[observe] option; expected name, as_type, capture_input, capture_output, transform_to_string, skip or crate
+ --> tests/ui/observe/unknown_option.rs:3:11
+  |
+3 | #[observe(capture = false)]
+  |           ^^^^^^^

@@ -159,6 +159,69 @@ impl TraceContext {
     }
 }
 
+impl TraceContext {
+    /// The current context with this trace as the parent of new spans: the
+    /// first observation started in it joins the trace (and is marked as its
+    /// root in Langfuse, like with
+    /// [`LangfuseTracer::start_observation_in_trace`](super::LangfuseTracer::start_observation_in_trace)).
+    /// An invalid trace ID leaves the current context unchanged.
+    pub(crate) fn current_context(&self) -> Context {
+        let current = Context::current();
+        match self.span_context() {
+            Some(remote) => {
+                let parent = remote.span_id();
+                current
+                    .with_remote_span_context(remote)
+                    .with_value(RemoteTraceParent(parent))
+            }
+            None => current,
+        }
+    }
+
+    /// Make this trace the parent of the spans started until the guard is
+    /// dropped, for synchronous code; see [`in_trace`].
+    ///
+    /// The guard must be dropped on the thread that created it, in reverse
+    /// order of creation (it is not `Send`).
+    pub fn attach(&self) -> opentelemetry::ContextGuard {
+        self.current_context().attach()
+    }
+}
+
+/// Run `future` with `trace` as the parent of the observations started in it:
+/// the first one joins the existing trace, under
+/// [`parent_observation_id`](TraceContext::parent_observation_id) if set,
+/// and the ones started inside it are its children as usual.
+///
+/// This is how a function annotated with `#[observe]` (feature `macros`) is
+/// attached to a trace from elsewhere, the equivalent of the
+/// `langfuse_trace_id` and `langfuse_parent_observation_id` arguments of the
+/// Python decorator. [`TraceContext::attach`] does the same for synchronous
+/// code. An invalid trace ID is ignored with a warning.
+///
+/// ```rust,no_run
+/// use langfuse_rust_sdk::otel::{LangfuseTracer, ObservationType, TraceContext, in_trace};
+///
+/// # async fn example(tracer: &LangfuseTracer, trace_id: String) {
+/// let trace = TraceContext::new(trace_id);
+/// in_trace(trace, async {
+///     let span = tracer.start_observation("follow-up", ObservationType::Span);
+///     span.end();
+/// })
+/// .await;
+/// # }
+/// ```
+pub async fn in_trace<F: Future>(trace: TraceContext, future: F) -> F::Output {
+    // Built when first polled, like the other scopes.
+    let cx = trace.current_context();
+    future.with_context(cx).await
+}
+
+/// Marks the remote parent set by [`in_trace`]: an observation started
+/// directly under it is the root of the trace in Langfuse.
+#[derive(Debug, Clone, Copy)]
+struct RemoteTraceParent(SpanId);
+
 fn parse_hex_id(id: &str, len: usize) -> Option<&str> {
     (id.len() == len && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))).then_some(id)
 }
@@ -243,6 +306,10 @@ impl Observation {
     ) -> Self {
         let start_time = SystemTime::now();
         let mut initial = vec![KeyValue::new(attr::OBSERVATION_TYPE, kind.as_str())];
+        let as_root = as_root
+            || parent_cx
+                .get::<RemoteTraceParent>()
+                .is_some_and(|remote| remote.0 == parent_cx.span().span_context().span_id());
         if as_root {
             initial.push(KeyValue::new(attr::AS_ROOT, true));
         }
@@ -416,6 +483,41 @@ impl Observation {
             state.status_message = Some(message);
         });
         self
+    }
+
+    /// Record a failure: level [`Level::Error`], `error` (its `Display`, or its
+    /// type name when that is empty) as status message, and an OpenTelemetry
+    /// `exception` event with its type and message. This is what
+    /// `#[observe]` records for an `Err` result.
+    pub fn record_error<E: fmt::Display + ?Sized>(&self, error: &E) -> &Self {
+        self.record_error_parts(std::any::type_name::<E>(), error.to_string())
+    }
+
+    pub(crate) fn record_error_parts(&self, type_name: &str, message: String) -> &Self {
+        if !self.inner.recording || self.is_ended() {
+            return self;
+        }
+        let message = if message.is_empty() {
+            type_name.to_owned()
+        } else {
+            message
+        };
+        self.set_level(Level::Error)
+            .set_status_message(message.clone());
+        self.inner.cx.span().add_event(
+            "exception",
+            vec![
+                KeyValue::new("exception.type", type_name.to_owned()),
+                KeyValue::new("exception.message", message),
+            ],
+        );
+        self
+    }
+
+    /// The tracer state of this observation.
+    #[cfg_attr(not(feature = "macros"), allow(dead_code))]
+    pub(crate) fn shared(&self) -> &Arc<TracerShared> {
+        &self.inner.shared
     }
 
     /// Make the whole trace viewable by anyone with its link. Cannot be undone

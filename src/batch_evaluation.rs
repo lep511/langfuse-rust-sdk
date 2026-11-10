@@ -51,7 +51,7 @@ use crate::error::LangfuseError;
 use crate::experiment::{
     CompositeEvaluator, CompositeEvaluatorInput, Evaluation, Evaluator, EvaluatorInput,
 };
-use crate::http::RequestOptions;
+use crate::http::CallOptions;
 use crate::models::observations::ObservationV2;
 use crate::models::scores::CreateScoreRequest;
 
@@ -546,10 +546,10 @@ impl LangfuseClient {
                 filter: effective_filter.clone(),
                 ..Default::default()
             };
-            let request_options = RequestOptions {
+            let request_options = CallOptions {
                 max_retries: Some(max_retries),
                 timeout: Some(FETCH_TIMEOUT),
-                ..RequestOptions::default()
+                ..CallOptions::default()
             };
             let page = match self
                 .observations

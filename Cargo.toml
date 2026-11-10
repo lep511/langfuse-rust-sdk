@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-sdk"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 description = "Rust SDK for the Langfuse LLM observability API"
 license = "MIT"
@@ -11,7 +11,11 @@ readme = "README.md"
 keywords = ["langfuse", "llm", "observability", "tracing", "sdk"]
 categories = ["api-bindings", "development-tools"]
 
+[workspace]
+members = ["macros"]
+
 [dependencies]
+langfuse-rust-sdk-macros = { version = "=0.8.0", path = "macros", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
@@ -23,12 +27,18 @@ uuid = { version = "1", features = ["v4", "serde"] }
 rand = "0.9"
 tracing = "0.1"
 url = "2"
+serde_urlencoded = "0.7"
 percent-encoding = "2"
 serde_norway = "0.9"
 sha2 = "0.11.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 opentelemetry = { version = "0.33", default-features = false, features = ["trace"], optional = true }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"], optional = true }
+# `tracing-layer`: the `tracing-opentelemetry` release built on `opentelemetry` 0.33.
+tracing-opentelemetry = { version = "0.34", default-features = false, optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"], optional = true }
+# `openai`: the async-openai API changes between 0.x versions, so the minor version is fixed.
+async-openai = { version = "0.43", default-features = false, features = ["rustls", "chat-completion", "embedding", "responses"], optional = true }
 
 [package.metadata.docs.rs]
 # Document the `otel` and `unstable` modules too.
@@ -38,12 +48,24 @@ all-features = true
 unstable = []
 # Native tracing on OpenTelemetry: observations, context propagation and batched export.
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "tokio/sync"]
+# Bridge from the `tracing` crate (`otel::tracing_layer`), e.g. for rig's `gen_ai.*` spans.
+tracing-layer = ["otel", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
+# The `#[observe]` attribute (`langfuse_rust_sdk::observe`).
+macros = ["otel", "dep:langfuse-rust-sdk-macros"]
+# Traced OpenAI calls through async-openai (`openai::OpenAI`).
+openai = ["otel", "dep:async-openai"]
+# Blocking client on an internal Tokio runtime (`blocking::LangfuseClient`).
+blocking = ["tokio/rt-multi-thread"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
 dotenvy = "0.15"
 wiremock = "0.6"
 futures = "0.3.34"
+tracing-subscriber = "0.3"
+rig-core = { version = "0.46", features = ["reqwest"] }
+rig-agent = "0.46"
+trybuild = "1"
 
 [[example]]
 name = "dashboards"
@@ -60,3 +82,19 @@ required-features = ["otel"]
 [[example]]
 name = "run_experiment"
 required-features = ["otel"]
+
+[[example]]
+name = "rig_tracing"
+required-features = ["tracing-layer"]
+
+[[example]]
+name = "observe"
+required-features = ["macros"]
+
+[[example]]
+name = "openai_tracing"
+required-features = ["openai"]
+
+[[example]]
+name = "blocking"
+required-features = ["blocking"]

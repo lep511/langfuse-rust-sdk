@@ -1,0 +1,20 @@
+[package]
+name = "langfuse-rust-sdk-macros"
+version = "0.8.0"
+edition = "2024"
+description = "The #[observe] attribute of langfuse-rust-sdk (use it through the `macros` feature of that crate)"
+license = "MIT"
+repository = "https://github.com/lep511/langfuse-rust-sdk"
+homepage = "https://github.com/lep511/langfuse-rust-sdk"
+documentation = "https://docs.rs/langfuse-rust-sdk"
+readme = "README.md"
+keywords = ["langfuse", "llm", "observability", "tracing", "macro"]
+categories = ["development-tools::debugging", "development-tools::procedural-macro-helpers"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

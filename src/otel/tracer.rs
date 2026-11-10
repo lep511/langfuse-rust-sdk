@@ -1,7 +1,7 @@
 //! The Langfuse tracer: OpenTelemetry provider, processor and export task.
 
 use std::fmt;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 
 use opentelemetry::trace::{SpanKind, TraceContextExt, TraceId, TracerProvider as _};
 use opentelemetry::{Context, InstrumentationScope, KeyValue};
@@ -19,6 +19,10 @@ use super::processor::{LANGFUSE_TRACER_NAME, LangfuseSpanProcessor};
 use crate::LangfuseClient;
 use crate::error::LangfuseError;
 use crate::models::scores::CreateScoreRequest;
+use crate::skills::serialize_skills;
+
+/// The tracer of [`LangfuseTracer::install_global`].
+static GLOBAL_TRACER: RwLock<Option<LangfuseTracer>> = RwLock::new(None);
 
 /// State shared by the tracer and its observations.
 pub(crate) struct TracerShared {
@@ -91,6 +95,7 @@ impl LangfuseTracer {
             mask,
             should_export_span,
             media_upload,
+            skills,
         } = options;
         let invalid = |msg: &str| {
             Err(LangfuseError::Config(format!(
@@ -129,6 +134,7 @@ impl LangfuseTracer {
             builder = builder.with_span_processor(LangfuseSpanProcessor::new(
                 public_key.clone(),
                 should_export_span,
+                skills.as_deref().and_then(serialize_skills),
                 sender.clone(),
                 Arc::clone(&resource_cell),
             ));
@@ -174,6 +180,35 @@ impl LangfuseTracer {
     /// State shared with the observations of this tracer.
     pub(crate) fn shared(&self) -> &Arc<TracerShared> {
         &self.shared
+    }
+
+    /// Make this tracer the global one, used by `#[observe]` (feature
+    /// `macros`) when no observation is current; returns the one it replaces.
+    ///
+    /// Inside an observation, `#[observe]` uses that observation's tracer, so
+    /// the global tracer is only needed for the first (root) observations.
+    /// Without either, observed functions run without tracing.
+    pub fn install_global(&self) -> Option<LangfuseTracer> {
+        GLOBAL_TRACER
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace(self.clone())
+    }
+
+    /// The tracer of [`install_global`](Self::install_global), if any.
+    pub fn global() -> Option<LangfuseTracer> {
+        GLOBAL_TRACER
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Remove the global tracer and return it.
+    pub fn uninstall_global() -> Option<LangfuseTracer> {
+        GLOBAL_TRACER
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     /// Whether tracing is enabled (spans are exported and scores queued).

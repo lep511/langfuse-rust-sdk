@@ -7,6 +7,7 @@ use std::time::Duration;
 use opentelemetry_sdk::trace::SpanData;
 
 use crate::error::LangfuseError;
+use crate::skills::SkillReference;
 
 /// Transform applied to observation input, output and metadata before they
 /// are recorded, e.g. to redact personal data.
@@ -80,6 +81,13 @@ pub struct TracingOptions {
     /// Upload base64 media found in exported span attributes and replace it
     /// with its reference string (default: `true`); see [`crate::media`].
     pub media_upload: bool,
+    /// Skills available to the application (e.g. from
+    /// [`discover_skills`](crate::skills::discover_skills)), recorded on the
+    /// spans started inside scopes that enable
+    /// [`attach_skills`](super::PropagatedAttributes::attach_skills); never on
+    /// spans of another Langfuse project. Serialized once, when the tracer is
+    /// created.
+    pub skills: Option<Vec<SkillReference>>,
 }
 
 impl Default for TracingOptions {
@@ -96,6 +104,7 @@ impl Default for TracingOptions {
             mask: None,
             should_export_span: None,
             media_upload: true,
+            skills: None,
         }
     }
 }
@@ -117,6 +126,7 @@ impl fmt::Debug for TracingOptions {
                 &self.should_export_span.as_ref().map(|_| "<fn>"),
             )
             .field("media_upload", &self.media_upload)
+            .field("skills", &self.skills)
             .finish()
     }
 }
@@ -191,6 +201,15 @@ impl TracingOptions {
     /// Set [`media_upload`](Self::media_upload).
     pub fn with_media_upload(mut self, media_upload: bool) -> Self {
         self.media_upload = media_upload;
+        self
+    }
+
+    /// Set [`skills`](Self::skills).
+    pub fn with_skills<I>(mut self, skills: I) -> Self
+    where
+        I: IntoIterator<Item = SkillReference>,
+    {
+        self.skills = Some(skills.into_iter().collect());
         self
     }
 

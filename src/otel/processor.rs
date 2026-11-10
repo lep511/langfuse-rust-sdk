@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use super::attributes::{self as attr, string_attribute};
 use super::exporter::Command;
 use super::options::ExportFilter;
-use super::propagation::{TRACE_ID_BAGGAGE_KEY, inherited_attributes};
+use super::propagation::{PropagatedState, TRACE_ID_BAGGAGE_KEY, inherited_attributes};
 
 /// Instrumentation scope of the spans created by this SDK.
 pub const LANGFUSE_TRACER_NAME: &str = "langfuse-sdk";
@@ -112,6 +112,8 @@ fn is_app_root_eligible(span: &SpanData) -> bool {
 pub(crate) struct LangfuseSpanProcessor {
     public_key: String,
     should_export: Option<ExportFilter>,
+    /// Configured skills (JSON), attached where the context asks for them.
+    skills: Option<String>,
     commands: mpsc::Sender<Command>,
     /// Resource of the tracer provider, read by the exporter.
     resource: Arc<OnceLock<Resource>>,
@@ -132,12 +134,14 @@ impl LangfuseSpanProcessor {
     pub(crate) fn new(
         public_key: String,
         should_export: Option<ExportFilter>,
+        skills: Option<String>,
         commands: mpsc::Sender<Command>,
         resource: Arc<OnceLock<Resource>>,
     ) -> Self {
         Self {
             public_key,
             should_export,
+            skills,
             commands,
             resource,
             expected: Mutex::new(HashMap::new()),
@@ -189,6 +193,27 @@ impl SpanProcessor for LangfuseSpanProcessor {
                 kv.key.as_str() != attr::OBSERVATION_PROMPT_NAME
                     && kv.key.as_str() != attr::OBSERVATION_PROMPT_VERSION
             });
+        }
+        // Skills set on the span win over propagated ones, which win over the
+        // configured ones.
+        let has_key = |attributes: &[KeyValue]| {
+            attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == attr::OBSERVATION_SKILLS_AVAILABLE)
+        };
+        if has_key(&data.attributes) {
+            inherited.retain(|kv| kv.key.as_str() != attr::OBSERVATION_SKILLS_AVAILABLE);
+        } else if let Some(skills) = &self.skills
+            && !has_key(&inherited)
+            && !self.is_foreign_project_span(&data)
+            && cx
+                .get::<PropagatedState>()
+                .is_some_and(PropagatedState::attaches_skills)
+        {
+            inherited.push(KeyValue::new(
+                attr::OBSERVATION_SKILLS_AVAILABLE,
+                skills.clone(),
+            ));
         }
         if !inherited.is_empty() {
             span.set_attributes(inherited);

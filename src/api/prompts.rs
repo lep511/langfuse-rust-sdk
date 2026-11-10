@@ -24,7 +24,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::LangfuseError;
-use crate::http::{HttpClient, RequestOptions, encode_path_segment};
+use crate::http::{CallOptions, HttpClient, encode_path_segment};
 use crate::models::enums::PromptType;
 use crate::models::prompts::{BasePrompt, ChatPromptMessage, CreatePromptRequest, Prompt};
 use crate::pagination::{Pages, Paginated, impl_page_query, paginate_pages};
@@ -137,11 +137,11 @@ impl GetPromptOptions {
         self
     }
 
-    fn request_options(&self) -> RequestOptions<'static> {
-        RequestOptions {
+    fn request_options(&self) -> CallOptions<'static> {
+        CallOptions {
             max_retries: self.max_retries,
             timeout: self.fetch_timeout,
-            ..RequestOptions::default()
+            ..CallOptions::default()
         }
     }
 }
@@ -333,7 +333,7 @@ impl PromptsClient {
     }
 
     /// Refresh `key` in the background unless a refresh is already running.
-    fn spawn_refresh(&self, key: CacheKey, ttl: Duration, request: RequestOptions<'static>) {
+    fn spawn_refresh(&self, key: CacheKey, ttl: Duration, request: CallOptions<'static>) {
         // Outside a Tokio runtime there is nothing to spawn on: keep serving the stale prompt.
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
@@ -363,7 +363,7 @@ async fn fetch_and_store(
     cache: &PromptCache,
     key: &CacheKey,
     ttl: Duration,
-    request: RequestOptions<'_>,
+    request: CallOptions<'_>,
 ) -> Result<Arc<Prompt>, LangfuseError> {
     let generation = cache.generation();
     let params = match &key.selector {

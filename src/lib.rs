@@ -117,21 +117,134 @@ pub mod models;
 mod background;
 // Documented by its own `//!` docs, so intra-doc links resolve inside the module.
 pub mod batch_evaluation;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+#[cfg(feature = "blocking")]
+pub mod blocking;
 mod dataset;
 // Documented by its own `//!` docs, so intra-doc links resolve inside the module.
 pub mod experiment;
 #[cfg(feature = "otel")]
 pub mod otel;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+#[cfg(feature = "openai")]
+pub mod openai;
 /// Pagination helpers for list endpoints.
 pub mod pagination;
 mod prompt_cache;
 /// Retry policy with exponential backoff and jitter.
 pub mod retry;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+pub mod skills;
 /// Standalone utilities (YAML processing).
 pub mod tools;
 
+/// Trace a function as a Langfuse observation (feature `macros`).
+///
+/// Every call becomes an observation named after the function, with its
+/// arguments as input and its result as output. The observation is current
+/// while the function runs, so observations started inside (by other
+/// observed functions, `tracer.start_observation` or other
+/// instrumentation) are its children, and [`Observation::current`](otel::Observation::current)
+/// returns it, for example to set the model of a generation.
+///
+/// ```rust,no_run
+/// use langfuse_rust_sdk::observe;
+/// use langfuse_rust_sdk::otel::{Observation, TracingOptions};
+/// use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
+/// use serde_json::json;
+///
+/// #[observe(as_type = "retriever")]
+/// async fn search(query: &str, limit: usize) -> Vec<String> {
+///     vec![format!("result for {query}"); limit]
+/// }
+///
+/// #[observe(name = "llm-call", as_type = "generation")]
+/// async fn complete(prompt: String) -> Result<String, std::io::Error> {
+///     if let Some(generation) = Observation::current() {
+///         generation.set_model("gpt-4o").set_usage_details(&json!({"input": 12, "output": 3}));
+///     }
+///     Ok(format!("answer to {prompt}"))
+/// }
+///
+/// #[observe]
+/// async fn answer(question: &str) -> Result<String, std::io::Error> {
+///     let context = search(question, 3).await;
+///     complete(format!("{question} {}", context.join(" "))).await
+/// }
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let client = LangfuseClient::new(ClientConfig::from_env()?)?;
+/// let tracer = client.tracer(TracingOptions::from_env()?)?;
+/// tracer.install_global(); // used when no observation is current
+///
+/// answer("Where is my order?").await?; // one trace: answer → search, llm-call
+/// tracer.shutdown().await;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Options
+///
+/// `#[observe(name = "...", as_type = "...", capture_input = bool, capture_output = bool,
+/// skip(arg, ...), transform_to_string = path, crate = "path")]`, all optional:
+///
+/// - `name`: observation name (default: the function name).
+/// - `as_type`: `span` (default), `generation`, `agent`, `tool`, `chain`,
+///   `retriever`, `embedding`, `evaluator` or `guardrail`; anything else
+///   (including `event`, which has no duration) is a compile error.
+/// - `capture_input` / `capture_output`: record the arguments / the result.
+///   By default both are recorded unless the
+///   `LANGFUSE_OBSERVE_DECORATOR_IO_CAPTURE_ENABLED` environment variable is
+///   `false` or `0` (read once, at the first call).
+/// - `skip(a, b)`: arguments never recorded (e.g. secrets or clients).
+/// - `transform_to_string`: for streams and iterators, a
+///   `fn(&[serde_json::Value]) -> String` that builds the output from the
+///   recorded items.
+/// - `crate`: path of this crate when it is renamed in `Cargo.toml`.
+///
+/// # What is recorded
+///
+/// - **Input**: an object with one entry per argument, by parameter name
+///   (`self` is left out). The Python SDK records `{"args": [...], "kwargs": {...}}`;
+///   Rust has no keyword arguments. Functions without arguments record no input.
+/// - **Values**: arguments, results and stream items are recorded as JSON
+///   when their type implements `Serialize`, and as `"<type name>"`
+///   otherwise (decided at compile time). The tracer's
+///   [`mask`](otel::TracingOptions::mask) applies.
+/// - **Errors**: when the function returns a `Result` and it is `Err`, the
+///   observation gets level `ERROR`, the error's `Display` (or its type name
+///   if that is empty) as status message, and an `exception` event (see
+///   [`Observation::record_error`](otel::Observation::record_error)); `Ok(v)`
+///   records `v` as output. A panic, or a future dropped before it finishes
+///   (cancellation), also ends the observation with level `ERROR`.
+/// - **Streams and iterators**: a function returning `impl Stream<Item = T>`
+///   or `impl Iterator<Item = T>` (with `Send`, `Sync`, `Unpin` or lifetime
+///   bounds at most) keeps its observation open until the stream or iterator
+///   ends or is dropped, and the observation is current while it produces
+///   items. The output is the `transform_to_string` result, else the
+///   concatenation when every item is a string, else the list of items; an
+///   `Err` item marks the observation as failed.
+///
+/// # Which tracer
+///
+/// Inside an observation, the observed function uses that observation's
+/// tracer; otherwise the global one of
+/// [`LangfuseTracer::install_global`](otel::LangfuseTracer::install_global).
+/// Without either the function runs untraced, at the cost of a context
+/// lookup. Run a call inside [`otel::in_trace`] to attach it to an existing
+/// trace or parent observation (the Python decorator's `langfuse_trace_id`
+/// and `langfuse_parent_observation_id` arguments).
+///
+/// Synchronous functions work too: the observation is current until they
+/// return (for code on the same thread). Like every context in async Rust,
+/// the observation does not follow `tokio::spawn`: wrap the spawned future
+/// with [`Observation::in_scope`](otel::Observation::in_scope).
+#[cfg(feature = "macros")]
+pub use langfuse_rust_sdk_macros::observe;
+
 pub use config::{ClientConfig, ConfigBuilder};
 pub use error::LangfuseError;
+pub use http::RequestOptions;
 pub use pagination::{CursorPaginated, Paginated};
 pub use retry::RetryPolicy;
 
@@ -254,7 +367,65 @@ impl LangfuseClient {
         let score_queue = config.score_queue.clone();
         let http = Arc::new(HttpClient::new(config)?);
         let background = Arc::new(background::Background::new(Arc::clone(&http), score_queue));
-        Ok(Self {
+        Ok(Self::assemble(
+            http,
+            prompt_cache,
+            Arc::new(OnceLock::new()),
+            public_key,
+            background,
+        ))
+    }
+
+    /// A view of this client that applies `options` to every API request:
+    /// timeout, retries, extra headers, query and body parameters, or a hook
+    /// that sees the response headers (see [`RequestOptions`]).
+    ///
+    /// The view shares everything else with this client: connection pool,
+    /// prompt cache, cached project ID and background queues. Scores queued
+    /// with [`score`](Self::score) and media uploads keep the options of the
+    /// client that created the queues, the original one. Views nest: the
+    /// options of `client.with_options(a).with_options(b)` are `a` overridden
+    /// by `b`. Creating a view is cheap (no I/O); keep it for repeated use.
+    ///
+    /// ```rust,no_run
+    /// use langfuse_rust_sdk::{LangfuseClient, RequestOptions};
+    /// use std::time::Duration;
+    ///
+    /// # async fn example(client: &LangfuseClient) -> Result<(), langfuse_rust_sdk::LangfuseError> {
+    /// let fast = client.with_options(
+    ///     RequestOptions::default()
+    ///         .with_timeout(Duration::from_secs(2))
+    ///         .with_max_retries(0),
+    /// );
+    /// let health = fast.health.check().await?;
+    /// # let _ = health;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_options(&self, options: RequestOptions) -> LangfuseClient {
+        Self::assemble(
+            Arc::new(self.http.with_options(&options)),
+            Arc::clone(&self.prompts.cache),
+            Arc::clone(&self.project_id),
+            Arc::clone(&self.public_key),
+            Arc::clone(&self.background),
+        )
+    }
+
+    /// The overrides applied to every request of this client (empty unless
+    /// it is a view from [`with_options`](Self::with_options)).
+    pub fn request_options(&self) -> &RequestOptions {
+        self.http.options()
+    }
+
+    fn assemble(
+        http: Arc<HttpClient>,
+        prompt_cache: Arc<prompt_cache::PromptCache>,
+        project_id: Arc<OnceLock<String>>,
+        public_key: Arc<str>,
+        background: Arc<background::Background>,
+    ) -> Self {
+        Self {
             health: HealthClient {
                 http: Arc::clone(&http),
             },
@@ -345,10 +516,10 @@ impl LangfuseClient {
                 http: Arc::clone(&http),
             },
             http,
-            project_id: Arc::new(OnceLock::new()),
+            project_id,
             public_key,
             background,
-        })
+        }
     }
 
     /// Queue a score; it is sent in the background with others in one request

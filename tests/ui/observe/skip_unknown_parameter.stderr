@@ -1,0 +1,5 @@
+error: #[observe] skip: no parameter named `token`
+ --> tests/ui/observe/skip_unknown_parameter.rs:3:16
+  |
+3 | #[observe(skip(token))]
+  |                ^^^^^

@@ -12,6 +12,7 @@ use serde::Serialize;
 use super::attributes::{self as attr, metadata_value, to_json};
 use super::observation::{CurrentObservation, set_or_buffer};
 use crate::models::prompts::Prompt;
+use crate::skills::{SkillReference, serialize_skills};
 
 /// Prefix of the baggage keys written with [`PropagatedAttributes::as_baggage`].
 const BAGGAGE_PREFIX: &str = "langfuse_";
@@ -51,6 +52,16 @@ pub struct PropagatedAttributes {
     pub metadata: BTreeMap<String, serde_json::Value>,
     /// Langfuse prompt linked to every generation of the scope.
     pub prompt: Option<PromptLink>,
+    /// Skills available in the scope (see [`crate::skills`]), recorded on the
+    /// current observation and every span started inside. Replaces the skills
+    /// of outer scopes and the configured ones, also when empty. Never written
+    /// to baggage.
+    pub skills_available: Option<Vec<SkillReference>>,
+    /// Attach the skills configured with
+    /// [`TracingOptions::with_skills`](super::TracingOptions::with_skills) to
+    /// the spans started in the scope (`None`: inherit from outer scopes; off
+    /// by default). Spans with their own or propagated skills keep them.
+    pub attach_skills: Option<bool>,
     /// Also write the attributes to W3C baggage, so they cross service
     /// boundaries with a baggage propagator. Baggage is sent in HTTP headers:
     /// do not use it for sensitive values.
@@ -115,6 +126,21 @@ impl PropagatedAttributes {
     /// Set [`prompt`](Self::prompt).
     pub fn with_prompt_link(mut self, prompt: PromptLink) -> Self {
         self.prompt = Some(prompt);
+        self
+    }
+
+    /// Set [`skills_available`](Self::skills_available).
+    pub fn with_skills_available<I>(mut self, skills: I) -> Self
+    where
+        I: IntoIterator<Item = SkillReference>,
+    {
+        self.skills_available = Some(skills.into_iter().collect());
+        self
+    }
+
+    /// Set [`attach_skills`](Self::attach_skills).
+    pub fn with_attach_skills(mut self, attach_skills: bool) -> Self {
+        self.attach_skills = Some(attach_skills);
         self
     }
 
@@ -238,6 +264,10 @@ pub(crate) struct PropagatedState {
     /// Serialized (JSON) values.
     metadata: BTreeMap<String, String>,
     prompt: Option<PromptLink>,
+    /// Serialized (JSON array); never baggage.
+    skills_available: Option<String>,
+    /// Whether the configured skills are attached to new spans.
+    attach_skills: Option<bool>,
     /// Set by `run_experiment`; forces the `sdk-experiment` environment.
     experiment: Option<ExperimentAttributes>,
 }
@@ -289,7 +319,18 @@ impl PropagatedState {
                 prompt.version,
             ));
         }
+        if let Some(skills) = &self.skills_available {
+            out.push(KeyValue::new(
+                attr::OBSERVATION_SKILLS_AVAILABLE,
+                skills.clone(),
+            ));
+        }
         out
+    }
+
+    /// Whether the scope attaches the configured skills to new spans.
+    pub(crate) fn attaches_skills(&self) -> bool {
+        self.attach_skills == Some(true)
     }
 
     fn merge(&mut self, attributes: PropagatedAttributes) {
@@ -326,6 +367,14 @@ impl PropagatedState {
         }
         if let Some(prompt) = attributes.prompt {
             self.prompt = Some(prompt);
+        }
+        if let Some(skills) = attributes.skills_available
+            && let Some(serialized) = serialize_skills(&skills)
+        {
+            self.skills_available = Some(serialized);
+        }
+        if let Some(attach) = attributes.attach_skills {
+            self.attach_skills = Some(attach);
         }
     }
 
@@ -439,6 +488,8 @@ fn from_baggage(suffix: &str, value: String) -> Option<(String, OtelValue)> {
         "version" => attr::VERSION,
         "trace_name" => attr::TRACE_NAME,
         "prompt_name" => attr::OBSERVATION_PROMPT_NAME,
+        // Never written by this SDK, but read like the Python SDK does.
+        "skills_available" => attr::OBSERVATION_SKILLS_AVAILABLE,
         "environment" => {
             return valid_environment(&value).then(|| (attr::ENVIRONMENT.to_owned(), value.into()));
         }
