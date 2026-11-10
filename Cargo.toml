@@ -119,3 +119,12 @@ required-features = ["blocking"]
 [[example]]
 name = "bedrock_tracing"
 required-features = ["bedrock"]
+
+# Development builds carry no debuginfo: it made up ~95% of every test and
+# example binary (236 MB -> 10 MB each) and `target/` grew past 50 GB.
+# Panic messages keep their file:line; backtrace frames keep their names but
+# lose file:line. For a debugging session, opt back in with
+# `CARGO_PROFILE_DEV_DEBUG=line-tables-only` (or `full`). `cargo test` uses
+# the `test` profile, which inherits these settings.
+[profile.dev]
+debug = false

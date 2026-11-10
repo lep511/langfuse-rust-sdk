@@ -4,6 +4,21 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [Unreleased]
+
+Development only: nothing in the published crate changes (Cargo ignores the
+profiles of dependencies).
+
+### Changed
+
+- The `dev` profile (inherited by `test`) builds without debuginfo. Debug
+  sections were ~95% of every test and example binary (236 MB -> 10 MB);
+  a fresh `cargo test --no-run --all-features` drops from 22.7 GiB to
+  3.5 GiB and from 194 s to 51 s, `cargo test --no-run` from 9.4 GiB to
+  2.5 GiB, and relinking every test after an edit from 31 s to 8.5 s. Panic
+  messages keep their file:line; set `CARGO_PROFILE_DEV_DEBUG=line-tables-only`
+  (or `full`) for backtraces with lines or a debugger.
+
 ## [0.10.2] - 2026-11-10
 
 A review against Langfuse v4 (Langfuse Cloud becomes v4-only on 2026-11-16):
