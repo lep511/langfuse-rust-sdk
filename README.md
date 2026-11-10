@@ -125,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Examples
 
-All examples are in the `examples/` directory. They auto-load a `.env` file via `dotenvy`, so you can either export environment variables or create a `.env` file:
+The examples are in the `examples/` directory, except `rig_tracing` and `bedrock_tracing`, which live in the unpublished `integration-tests/` workspace member (so that the crate's own builds never compile rig or the AWS SDK; run them with `-p langfuse-rust-sdk-integration-tests`). They auto-load a `.env` file via `dotenvy`, so you can either export environment variables or create a `.env` file:
 
 ```sh
 # Option 1: .env file (recommended)
@@ -137,6 +137,7 @@ EOF
 
 cargo run --example <name>
 cargo run --example dashboards --features unstable   # unstable APIs
+cargo run -p langfuse-rust-sdk-integration-tests --example bedrock_tracing --features bedrock
 
 # Option 2: inline env vars
 LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example <name>
@@ -171,9 +172,9 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`scim_users`](examples/scim_users.rs) | SCIM provider config and paginated user list (organization key, read-only) |
 | [`dashboards`](examples/dashboards.rs) | Build a dashboard with three widgets, pause so you can open it in the UI, then delete it (`--features unstable`) |
 | [`observe`](examples/observe.rs) | Trace an agent, a retriever, a streamed generation and a failing tool with `#[observe]`, with skills (`--features macros`, writes one trace) |
-| [`rig_tracing`](examples/rig_tracing.rs) | Trace a rig agent through `otel::tracing_layer` (`--features tracing-layer`, needs an OpenAI-compatible endpoint, writes one trace) |
+| [`rig_tracing`](integration-tests/examples/rig_tracing.rs) | Trace a rig agent through `otel::tracing_layer` (`-p langfuse-rust-sdk-integration-tests --features tracing-layer`, needs an OpenAI-compatible endpoint, writes one trace) |
 | [`openai_tracing`](examples/openai_tracing.rs) | Trace a chat completion, a streamed one and an embedding made with async-openai (`--features openai`, needs `OPENAI_API_KEY`, writes one trace) |
-| [`bedrock_tracing`](examples/bedrock_tracing.rs) | Trace a Converse call and a streamed one made with aws-sdk-bedrockruntime (`--features bedrock`, needs AWS credentials with Bedrock access, writes one trace) |
+| [`bedrock_tracing`](integration-tests/examples/bedrock_tracing.rs) | Trace a Converse call and a streamed one made with aws-sdk-bedrockruntime (`-p langfuse-rust-sdk-integration-tests --features bedrock`, needs AWS credentials with Bedrock access, writes one trace) |
 | [`blocking`](examples/blocking.rs) | The blocking client from a plain `main`, with a per-request options view (`--features blocking`, read-only) |
 
 ## Configuration
@@ -430,7 +431,7 @@ input and output messages (verified against Langfuse Cloud). Spans started insid
 span are children of that span. rig-agent starts a new trace unless a `tracing` span is current:
 run the agent inside one (`.instrument(span)`). By default only `gen_ai.*` spans of the layer are
 exported; accept the others with `otel::is_tracing_layer_span`. See
-[`rig_tracing`](examples/rig_tracing.rs).
+[`rig_tracing`](integration-tests/examples/rig_tracing.rs).
 
 ### OpenAI (feature `openai`)
 
@@ -473,7 +474,7 @@ Converse and ConverseStream calls, for every model Bedrock serves (Claude, Nova,
 tools, the model ID, the inference parameters, the output message, the usage with prompt-cache
 reads and writes (`input_cache_read`, `input_cache_creation`, priced by Langfuse), the stop
 reason, time to first token for streams, and errors with level `ERROR`. See
-[`bedrock_tracing`](examples/bedrock_tracing.rs).
+[`bedrock_tracing`](integration-tests/examples/bedrock_tracing.rs).
 
 ### Usage of other providers
 

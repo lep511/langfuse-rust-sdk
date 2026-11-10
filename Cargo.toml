@@ -12,7 +12,10 @@ keywords = ["langfuse", "llm", "observability", "tracing", "sdk"]
 categories = ["api-bindings", "development-tools"]
 
 [workspace]
-members = ["macros"]
+# `integration-tests` (unpublished) holds the tests and examples that need rig
+# or the AWS SDK with an HTTP client: `cargo test` of this crate, and the
+# trybuild project built from its dev-dependencies, never compile them.
+members = ["macros", "integration-tests"]
 
 [dependencies]
 langfuse-rust-sdk-macros = { version = "=0.10.2", path = "macros", optional = true }
@@ -66,19 +69,16 @@ bedrock = ["otel", "dep:aws-sdk-bedrockruntime", "dep:aws-smithy-types"]
 # Blocking client on an internal Tokio runtime (`blocking::LangfuseClient`).
 blocking = ["tokio/rt-multi-thread"]
 
+# Dev-dependencies are compiled for every `cargo test`, whatever the features,
+# and trybuild copies all of them into its project: heavy crates used by
+# feature-gated tests (rig, aws-config, the AWS SDK's default features) belong
+# in `integration-tests/`.
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
 dotenvy = "0.15"
 wiremock = "0.6"
 futures = "0.3.34"
-tracing-subscriber = "0.3"
-rig-core = { version = "0.46", features = ["reqwest"] }
-rig-agent = "0.46"
 trybuild = "1"
-aws-sdk-bedrockruntime = "1.153"
-aws-config = { version = "1", features = ["behavior-version-latest"] }
-# Encodes the event-stream frames of the fake Bedrock `converse-stream` endpoint.
-aws-smithy-eventstream = "0.61"
 
 [[example]]
 name = "dashboards"
@@ -101,10 +101,6 @@ name = "run_experiment"
 required-features = ["otel"]
 
 [[example]]
-name = "rig_tracing"
-required-features = ["tracing-layer"]
-
-[[example]]
 name = "observe"
 required-features = ["macros"]
 
@@ -115,10 +111,6 @@ required-features = ["openai"]
 [[example]]
 name = "blocking"
 required-features = ["blocking"]
-
-[[example]]
-name = "bedrock_tracing"
-required-features = ["bedrock"]
 
 # Development builds carry no debuginfo: it made up ~95% of every test and
 # example binary (236 MB -> 10 MB each) and `target/` grew past 50 GB.

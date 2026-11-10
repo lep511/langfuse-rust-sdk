@@ -262,11 +262,16 @@ Keeping a changelog makes it easier for users to understand what changed and dec
 # Format
 cargo fmt --check
 
-# Lint — treat warnings as errors to keep the codebase clean
-cargo clippy --all-targets -- -D warnings
+# Lint — treat warnings as errors to keep the codebase clean (every workspace member)
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-# Tests (unit + integration + doc-tests)
+# Tests (unit + integration + doc-tests), then the rig / AWS SDK tests of the
+# unpublished integration-tests member
 cargo test --all-features
+cargo test -p langfuse-rust-sdk-integration-tests --all-features
+
+# The package must not contain integration-tests/ (it is a separate, unpublished member)
+cargo package --list | grep -c '^integration-tests/'   # prints 0
 
 # Docs — no broken links or missing public items
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps

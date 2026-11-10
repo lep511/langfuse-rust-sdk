@@ -11,7 +11,7 @@
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... OPENAI_API_KEY=sk-... \
-//!   cargo run --example rig_tracing --features tracing-layer
+//!   cargo run -p langfuse-rust-sdk-integration-tests --example rig_tracing --features tracing-layer
 //! ```
 
 use langfuse_rust_sdk::otel::{

@@ -2,6 +2,7 @@
 //! calls against a fake Bedrock server, checked on the exported generations.
 #![cfg(feature = "bedrock")]
 
+#[path = "../../tests/common/mod.rs"]
 mod common;
 
 use std::time::Duration;

@@ -18,6 +18,18 @@ profiles of dependencies).
   2.5 GiB, and relinking every test after an edit from 31 s to 8.5 s. Panic
   messages keep their file:line; set `CARGO_PROFILE_DEV_DEBUG=line-tables-only`
   (or `full`) for backtraces with lines or a debugger.
+- The tests and examples that need rig or the AWS SDK with an HTTP client
+  (`bedrock_tests`, the rig half of `tracing_layer_tests` as
+  `rig_tracing_tests`, and the `bedrock_tracing` and `rig_tracing` examples)
+  moved to the unpublished workspace member `integration-tests/`; run them
+  with `cargo test -p langfuse-rust-sdk-integration-tests --all-features`.
+  The main crate lost the dev-dependencies `rig-core`, `rig-agent`,
+  `aws-sdk-bedrockruntime` (with its default features), `aws-config`,
+  `aws-smithy-eventstream` and `tracing-subscriber`, which every `cargo test`
+  compiled whatever the features, and which trybuild copied into its project.
+  The integration member builds the SDK with `rt-tokio` and
+  `default-https-client` only, dropping the legacy hyper 0.14 / rustls 0.21
+  stack its `rustls` default feature added.
 
 ## [0.10.2] - 2026-11-10
 

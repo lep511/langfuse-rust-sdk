@@ -13,7 +13,7 @@
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... AWS_REGION=us-east-1 \
-//!   cargo run --example bedrock_tracing --features bedrock
+//!   cargo run -p langfuse-rust-sdk-integration-tests --example bedrock_tracing --features bedrock
 //! ```
 
 use aws_sdk_bedrockruntime::types::{

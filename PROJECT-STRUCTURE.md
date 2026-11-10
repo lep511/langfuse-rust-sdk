@@ -27,7 +27,9 @@ src/
   models/           — Typed request/response structs for all resources
   api/              — Resource clients (one per API group)
 macros/             — langfuse-rust-sdk-macros: the #[observe] attribute (feature `macros`)
-examples/           — 31 runnable examples covering all major features
+examples/           — 29 runnable examples covering all major features
 tests/              — wiremock HTTP tests (api_*), serde tests, config tests, trybuild UI tests
-                      (708 tests in total with --all-features, 531 without)
+                      (700 tests with --all-features, 531 without)
+integration-tests/  — unpublished workspace member: the rig and AWS SDK tests (8) and the
+                      rig_tracing / bedrock_tracing examples, so the crate never compiles them
 ```

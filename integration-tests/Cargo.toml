@@ -1,0 +1,66 @@
+# Tests and examples of `langfuse-rust-sdk` that need heavy third-party crates
+# (rig, the AWS SDK with an HTTP client, aws-config). They live in this
+# unpublished member so that `cargo test` of the main crate, and the trybuild
+# project it generates (which copies every dev-dependency), never compile them.
+#
+# The features mirror the main crate's names, so the shared `tests/common`
+# helpers and the `#![cfg(feature = "...")]` lines keep working:
+#
+#     cargo test -p langfuse-rust-sdk-integration-tests --all-features
+#     cargo run -p langfuse-rust-sdk-integration-tests --example bedrock_tracing --features bedrock
+[package]
+name = "langfuse-rust-sdk-integration-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Integration tests and examples of langfuse-rust-sdk with rig and the AWS SDK (not published)"
+license = "MIT"
+
+[lib]
+test = false
+doctest = false
+
+[features]
+# `tests/common` gunzips OTLP bodies with flate2 under this feature.
+otel = ["langfuse-rust-sdk/otel", "dep:flate2"]
+tracing-layer = ["otel", "langfuse-rust-sdk/tracing-layer", "dep:rig-core", "dep:rig-agent", "dep:tracing-subscriber"]
+bedrock = [
+    "otel",
+    "langfuse-rust-sdk/bedrock",
+    "dep:aws-sdk-bedrockruntime",
+    "dep:aws-smithy-types",
+    "dep:aws-smithy-eventstream",
+    "dep:aws-config",
+]
+
+# Optional normal dependencies: dev-dependencies cannot be optional, and these
+# must only be compiled when their feature is enabled.
+[dependencies]
+langfuse-rust-sdk = { path = ".." }
+flate2 = { version = "1", optional = true }
+rig-core = { version = "0.46", features = ["reqwest"], optional = true }
+rig-agent = { version = "0.46", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
+# Only the default HTTPS client and the Tokio runtime: the SDK's `rustls`
+# default feature adds the legacy hyper 0.14 / rustls 0.21 stack.
+aws-sdk-bedrockruntime = { version = "1.153", default-features = false, features = ["rt-tokio", "default-https-client"], optional = true }
+aws-smithy-types = { version = "1.9", optional = true }
+# Encodes the event-stream frames of the fake Bedrock `converse-stream` endpoint.
+aws-smithy-eventstream = { version = "0.61", optional = true }
+aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+dotenvy = "0.15"
+wiremock = "0.6"
+futures = "0.3.34"
+serde_json = "1"
+tracing = "0.1"
+
+[[example]]
+name = "bedrock_tracing"
+required-features = ["bedrock"]
+
+[[example]]
+name = "rig_tracing"
+required-features = ["tracing-layer"]
