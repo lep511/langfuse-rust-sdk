@@ -457,7 +457,7 @@ use langfuse_rust_sdk::bedrock::Bedrock;
 let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
 let bedrock = Bedrock::new(aws_sdk_bedrockruntime::Client::new(&aws), &tracer);
 let response = bedrock
-    .converse(|r| r.model_id("us.anthropic.claude-opus-5-5").messages(message))
+    .converse(|r| r.model_id("us.anthropic.claude-sonnet-5-5").messages(message))
     .with_name("summarize")
     .send()
     .await?;

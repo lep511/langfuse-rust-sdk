@@ -31,7 +31,7 @@
 //! let response = bedrock
 //!     .converse(|request| {
 //!         request
-//!             .model_id("us.anthropic.claude-opus-5-5")
+//!             .model_id("us.anthropic.claude-sonnet-5-5")
 //!             .messages(message)
 //!     })
 //!     .with_name("greeting")

@@ -4,6 +4,19 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.10.1] - 2026-11-10
+
+### Fixed
+
+- The `bedrock_tracing` example no longer sets `temperature`, which recent
+  Claude models on Bedrock reject, and exports its trace (with the failed
+  generation) when a call fails. It prints the question, records it as the
+  input of its agent observation, and prints both answers.
+- The default model of the example and of the `bedrock` docs is Claude
+  Sonnet (`us.anthropic.claude-sonnet-5-5`). The integration was verified
+  against Amazon Bedrock and Langfuse Cloud (model, usage, prompt-cache keys
+  and cost).
+
 ## [0.10.0] - 2026-11-10
 
 The main gaps found in a second comparison with the Python SDK (v5.2.0):

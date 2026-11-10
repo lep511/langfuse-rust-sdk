@@ -24,7 +24,7 @@ use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const OTEL_PATH: &str = "/api/public/otel/v1/traces";
-const MODEL: &str = "us.anthropic.claude-opus-5-5";
+const MODEL: &str = "us.anthropic.claude-sonnet-5-5";
 
 async fn setup() -> (LangfuseTracer, MockServer, MockServer) {
     let (client, langfuse) = test_client().await;

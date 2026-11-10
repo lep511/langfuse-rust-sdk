@@ -1,12 +1,12 @@
 //! Trace Amazon Bedrock Converse calls made with aws-sdk-bedrockruntime: a
 //! call and a streamed one, recorded as generations under one Langfuse
 //! observation with model, inference parameters, usage, input and output.
-//! Prints the trace URL.
+//! Prints the question, both answers and the trace URL.
 //!
 //! Needs AWS credentials and a region with Bedrock access (the usual AWS
 //! configuration: environment, profile or instance role). `BEDROCK_MODEL_ID`
 //! picks the model or inference profile (default
-//! `us.anthropic.claude-opus-5-5`).
+//! `us.anthropic.claude-sonnet-5-5`).
 //!
 //! Writes data: one trace, kept so you can open it. Delete it in the UI or with
 //! `client.traces.delete(trace_id)`.
@@ -26,6 +26,8 @@ use langfuse_rust_sdk::otel::{
 };
 use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
+const QUESTION: &str = "Name one museum in Lisbon.";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
@@ -33,10 +35,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracer = langfuse.tracer(TracingOptions::from_env()?)?;
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let bedrock = Bedrock::new(aws_sdk_bedrockruntime::Client::new(&aws), &tracer);
-    let model =
-        std::env::var("BEDROCK_MODEL_ID").unwrap_or_else(|_| "us.anthropic.claude-opus-5-5".into());
+    let model = std::env::var("BEDROCK_MODEL_ID")
+        .unwrap_or_else(|_| "us.anthropic.claude-sonnet-5-5".into());
 
+    println!("question: {QUESTION}");
     let request = tracer.start_observation("travel-assistant", ObservationType::Agent);
+    request.set_input(QUESTION);
     let user = PropagatedAttributes::default()
         .with_user_id("user-42")
         .with_tags(["rust-sdk", "example", "bedrock"]);
@@ -44,13 +48,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .in_scope(propagate_attributes(user, async {
             let question = Message::builder()
                 .role(ConversationRole::User)
-                .content(ContentBlock::Text("Name one museum in Lisbon.".into()))
+                .content(ContentBlock::Text(QUESTION.into()))
                 .build()?;
             let system = SystemContentBlock::Text("Answer in one short sentence.".into());
-            let inference = InferenceConfiguration::builder()
-                .max_tokens(60)
-                .temperature(0.2)
-                .build();
+            // Recent Claude models reject `temperature` and `top_p`: set them
+            // only for models that accept them.
+            let inference = InferenceConfiguration::builder().max_tokens(60).build();
 
             let response = bedrock
                 .converse(|r| {
@@ -92,15 +95,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     streamed.push_str(&text);
                 }
             }
-            Ok::<_, Box<dyn std::error::Error>>(format!("{answer} / {streamed}"))
+            Ok::<_, Box<dyn std::error::Error>>((answer, streamed))
         }))
-        .await?;
-    request.set_output(&summary);
+        .await;
+    match &summary {
+        Ok((answer, streamed)) => {
+            request.set_output(answer);
+            println!("answer: {answer}");
+            println!("streamed answer: {streamed}");
+        }
+        // The failed generation is recorded with level ERROR; keep the trace.
+        Err(error) => {
+            request.record_error(error);
+        }
+    }
     request.end();
-    println!("{summary}");
 
+    // Export the trace even when a call failed.
     let trace_id = request.trace_id().to_owned();
     tracer.shutdown().await;
     println!("trace: {}", langfuse.trace_url(&trace_id).await?);
-    Ok(())
+    summary.map(|_| ())
 }
