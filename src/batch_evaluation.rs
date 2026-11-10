@@ -49,7 +49,7 @@ use crate::LangfuseClient;
 use crate::api::observations::ListObservationsParams;
 use crate::error::LangfuseError;
 use crate::experiment::{
-    CompositeEvaluator, CompositeEvaluatorInput, Evaluation, Evaluator, EvaluatorInput,
+    CompositeEvaluator, CompositeEvaluatorInput, Evaluation, Evaluator, EvaluatorInput, catch_panic,
 };
 use crate::http::CallOptions;
 use crate::models::observations::ObservationV2;
@@ -341,7 +341,8 @@ pub struct BatchEvaluationResult {
     pub duration: Duration,
     /// IDs of the failed observations.
     pub failed_item_ids: Vec<String>,
-    /// Number of failed observations per error kind (`MissingTraceId`, `MapperError`).
+    /// Number of failed observations per error kind (`MissingTraceId`,
+    /// `MapperError`, also for a panicking mapper).
     pub error_summary: BTreeMap<String, usize>,
     /// Whether observations may remain after `max_items`.
     pub has_more_items: bool,
@@ -458,8 +459,9 @@ impl LangfuseClient {
     /// observation (with its trace and environment, and the merged
     /// metadata); the scores are flushed before returning.
     ///
-    /// An observation without trace ID, or whose mapper fails, counts as
-    /// failed; a failing evaluator is counted and the others still run. A
+    /// An observation without trace ID, or whose mapper fails (returns an
+    /// error or panics), counts as failed; a failing (or panicking) evaluator
+    /// is counted and the others still run. A
     /// failed page request ends the run with `completed: false` and a resume
     /// token.
     ///
@@ -759,16 +761,14 @@ impl ItemEvaluation<'_> {
             ));
         };
         let environment = observation.environment.clone();
-        let input = self
-            .mapper
-            .map(observation)
+        let input = catch_panic(async { self.mapper.map(observation).await })
             .await
             .map_err(|err| failure("MapperError", err))?;
 
         let mut evaluations = Vec::new();
         let mut runs = Vec::with_capacity(self.evaluators.len());
         for evaluator in self.evaluators {
-            match evaluator.evaluate(input.clone()).await {
+            match catch_panic(async { evaluator.evaluate(input.clone()).await }).await {
                 Ok(results) => {
                     runs.push(Some(results.len()));
                     evaluations.extend(results);
@@ -786,10 +786,8 @@ impl ItemEvaluation<'_> {
         if let Some(composite) = self.composite_evaluator
             && !evaluations.is_empty()
         {
-            match composite
-                .evaluate(CompositeEvaluatorInput::new(input, evaluations.clone()))
-                .await
-            {
+            let composite_input = CompositeEvaluatorInput::new(input, evaluations.clone());
+            match catch_panic(async { composite.evaluate(composite_input).await }).await {
                 Ok(results) => {
                     for evaluation in results {
                         self.score(&id, &trace_id, environment.as_deref(), &evaluation);

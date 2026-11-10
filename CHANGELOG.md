@@ -4,6 +4,71 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.10.0] - 2026-11-10
+
+The main gaps found in a second comparison with the Python SDK (v5.2.0):
+providers beyond OpenAI, prompt and observation timeouts, panics in
+experiments, the span attribute limit, HTTP error details and credentials in
+`Debug` output.
+
+### Added
+
+- **Amazon Bedrock integration** (feature `bedrock`, new optional
+  dependencies `aws-sdk-bedrockruntime` and `aws-smithy-types`):
+  `bedrock::Bedrock::new(client, &tracer)` records `converse(..).send()` and
+  `converse_stream(..).send()` as generations, with the system prompt and
+  messages (images and documents as media), tools, model ID, inference
+  parameters, output, usage with prompt-cache reads and writes
+  (`input_cache_read`, `input_cache_creation`), stop reason, latency, time to
+  first token and errors. `TracedConverseStream` has `recv()` (like the SDK's
+  `EventReceiver`) and `into_stream()`, and ends its generation when the
+  stream ends, fails or is dropped. Per call: `with_name`, `with_metadata`,
+  `with_prompt`, `with_trace_context`. Example `bedrock_tracing`.
+- **`usage::normalize_usage`** (no feature needed): a port of the Python SDK's
+  `_parse_usage_model`, translating the usage of Anthropic, Bedrock, Vertex AI
+  / Gemini, IBM and LangChain-style details into Langfuse usage keys;
+  `Observation::set_provider_usage` records it on a generation.
+- `LangfuseError::status()` and `LangfuseError::message()`, and the variant
+  `LangfuseError::ClientError { status, message, body }` for the 4xx statuses
+  without a variant of their own (402, 408, 413, 422, ...).
+
+### Changed
+
+- `prompts.get_cached` without `fetch_timeout` now waits 5 s per attempt (the
+  Python SDK default) unless the client timeout was chosen
+  (`ConfigBuilder::timeout`, `LANGFUSE_TIMEOUT` or a custom `reqwest::Client`)
+  or a `with_options` view sets one: a cold start returns the fallback in
+  about 17 s instead of about 90 s when Langfuse does not answer.
+- The SDK-built `reqwest::Client` has a 5 s connect timeout, so an
+  unreachable host fails fast; the 30 s request timeout is unchanged.
+- `observations.list_pages` requests each page with a 60 s timeout, as the
+  Python SDK does (the server scans for up to 45 s); a view timeout replaces
+  it.
+- `run_experiment` and `run_batched_evaluation` catch panics in tasks,
+  evaluators, composite and run evaluators and mappers (`futures-util` now
+  uses its `std` feature): the item or evaluator counts as failed
+  (`panicked: <message>`) and the run goes on, so its results are returned
+  and its scores flushed.
+- Observations keep their core attributes within the span attribute limit
+  (`OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT`, default 128): metadata keys are dropped
+  first, then the least important keys, with a warning. Before, the SDK
+  dropped the attributes that sorted after the metadata keys (model, usage,
+  output, prompt, user and session IDs) without a warning. Attributes equal
+  to the ones the span started with are no longer written twice.
+- **Breaking:** HTTP errors keep more detail. The message is the `message`
+  field of a JSON body, else its `error` field, else the compact JSON, the
+  start of a body that is not JSON (at most 500 characters) or the status
+  reason of an empty body, instead of `Unknown error`. Other 4xx statuses
+  are `ClientError` instead of `ServerError`. `RateLimited` has a `message`
+  field.
+- The tracing exporter turns `gen_ai.usage.*` counts recorded as strings
+  (by the `tracing` bridge, e.g. for rig) back into integers.
+
+### Fixed
+
+- `{:?}` of `ClientConfig` no longer prints the `Authorization` header (the
+  barely encoded secret key): it is marked sensitive.
+
 ## [0.9.0] - 2026-11-10
 
 Loose ends of tracing and configuration (Phase 6 of the Python SDK parity

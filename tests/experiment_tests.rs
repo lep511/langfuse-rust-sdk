@@ -525,6 +525,87 @@ async fn failed_items_are_marked_as_errors_and_left_out() {
 }
 
 #[tokio::test]
+async fn panicking_tasks_and_evaluators_do_not_stop_the_run() {
+    let (_client, tracer, server) = setup(TracingOptions::default()).await;
+    let data = vec![
+        LocalExperimentItem::new("panic"),
+        LocalExperimentItem::new("ok"),
+        LocalExperimentItem::new("fine"),
+    ];
+    let panicking = evaluator("panicking", |args: EvaluatorInput| async move {
+        if args.output == json!("FINE") {
+            panic!("evaluator bug on {}", args.output);
+        }
+        Evaluation::numeric("panicking", 1.0)
+    });
+    let panicking_run = run_evaluator("panicking_run", |_args: RunEvaluatorInput| async move {
+        panic!("run evaluator bug");
+        #[allow(unreachable_code)]
+        Evaluation::numeric("never", 0.0)
+    });
+    let result = tracer
+        .run_experiment(
+            data,
+            |item: ExperimentItem| async move {
+                let input = item.input().and_then(Value::as_str).unwrap_or_default();
+                if input == "panic" {
+                    // A typical bug: unwrap on an unexpected response (the
+                    // item has no metadata).
+                    let missing = item.metadata().and_then(Value::as_str);
+                    Ok::<_, String>(missing.unwrap().to_owned())
+                } else {
+                    Ok(input.to_uppercase())
+                }
+            },
+            ExperimentOptions::new("panics")
+                .with_evaluator(exact_match())
+                .with_evaluator(panicking)
+                .with_run_evaluator(panicking_run),
+        )
+        .await
+        .unwrap();
+
+    // The panicking item is left out; the others are evaluated by every
+    // evaluator that did not panic.
+    let outputs: Vec<&Value> = result.item_results.iter().map(|r| &r.output).collect();
+    assert_eq!(outputs, [&json!("OK"), &json!("FINE")]);
+    assert_eq!(result.item_results[0].evaluations.len(), 2);
+    assert_eq!(result.item_results[1].evaluations.len(), 1);
+    assert!(result.run_evaluations.is_empty());
+
+    // Spans and scores were flushed at the end of the run.
+    let spans = exported(&server).await;
+    let failed_task = named(&spans, "experiment-item-task")
+        .into_iter()
+        .find(|s| s.attr_str("langfuse.observation.input").as_deref() == Some("panic"))
+        .unwrap();
+    assert_eq!(
+        failed_task
+            .attr_str("langfuse.observation.level")
+            .as_deref(),
+        Some("ERROR")
+    );
+    let message = failed_task
+        .attr_str("langfuse.observation.status_message")
+        .unwrap();
+    assert!(
+        message.starts_with("panicked: called `Option::unwrap()` on a `None` value"),
+        "{message}"
+    );
+    let failed_evaluator = named(&spans, "panicking")
+        .into_iter()
+        .find(|s| s.attr_str("langfuse.observation.level").as_deref() == Some("ERROR"))
+        .unwrap();
+    assert_eq!(
+        failed_evaluator
+            .attr_str("langfuse.observation.status_message")
+            .as_deref(),
+        Some("panicked: evaluator bug on \"FINE\"")
+    );
+    assert_eq!(sent_scores(&server).await.len(), 3);
+}
+
+#[tokio::test]
 async fn the_composite_evaluator_is_skipped_without_evaluations() {
     let (_client, tracer, server) = setup(TracingOptions::default()).await;
     let nothing = evaluator("nothing", |_args: EvaluatorInput| async move {

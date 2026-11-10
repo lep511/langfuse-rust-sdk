@@ -33,7 +33,23 @@ pub(crate) struct TracerShared {
     pub(crate) mask: Option<MaskFn>,
     /// Share of traces recorded, applied to [`LangfuseTracer::score`].
     pub(crate) sample_rate: f64,
+    /// Attributes a span can hold (`OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT`, default
+    /// 128); observations keep their core attributes within it.
+    pub(crate) max_attributes: usize,
 }
+
+/// The span attribute limit of a provider built with the default
+/// configuration: `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT` when it is a valid `u32`
+/// (as `opentelemetry_sdk` reads it), else 128.
+fn span_attribute_limit() -> usize {
+    std::env::var("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT")
+        .ok()
+        .and_then(|raw| raw.parse::<u32>().ok())
+        .unwrap_or(DEFAULT_MAX_ATTRIBUTES_PER_SPAN) as usize
+}
+
+/// `opentelemetry_sdk`'s default `SpanLimits::max_attributes_per_span`.
+const DEFAULT_MAX_ATTRIBUTES_PER_SPAN: u32 = 128;
 
 /// Creates Langfuse observations and exports them in the background.
 ///
@@ -114,6 +130,12 @@ impl LangfuseTracer {
     /// `Sampler::TraceIdRatioBased`. Environment and release are still
     /// recorded on every observation.
     ///
+    /// Observations keep their core attributes (output, model, usage, ...)
+    /// within the span attribute limit, dropping metadata first; they assume
+    /// the default limit (`OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT`, else 128), so a
+    /// provider built with other `SpanLimits` should keep that limit or a
+    /// higher one.
+    ///
     /// [`shutdown`](Self::shutdown) stops the Langfuse export but leaves
     /// `provider` running; shut it down yourself. With tracing disabled,
     /// `provider` is not used and the tracer records nothing.
@@ -190,6 +212,7 @@ impl LangfuseTracer {
                 release: settings.release.clone(),
                 mask: settings.mask.clone(),
                 sample_rate: settings.sample_rate,
+                max_attributes: span_attribute_limit(),
             }),
             provider,
             processor,

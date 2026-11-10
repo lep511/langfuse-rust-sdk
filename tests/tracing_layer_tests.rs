@@ -139,9 +139,19 @@ async fn rig_agents_become_children_of_the_current_observation() {
         attr(chat, "gen_ai.response.model"),
         Some(json!("gpt-4o-mini-2024-07-18"))
     );
-    // `tracing` records unsigned integers through `Debug`: as strings.
-    assert_eq!(attr(chat, "gen_ai.usage.input_tokens"), Some(json!("12")));
-    assert_eq!(attr(chat, "gen_ai.usage.output_tokens"), Some(json!("3")));
+    // `tracing` records unsigned integers through `Debug`, as strings; the
+    // exporter turns the token counts back into integers.
+    let int_value = |key: &str| {
+        let kv = chat["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|kv| kv["key"] == key)
+            .unwrap();
+        kv["value"]["intValue"].clone()
+    };
+    assert_eq!(int_value("gen_ai.usage.input_tokens"), json!(12));
+    assert_eq!(int_value("gen_ai.usage.output_tokens"), json!(3));
     let text = |key: &str| attr(chat, key).unwrap().as_str().unwrap().to_owned();
     assert!(text("gen_ai.input.messages").contains("Capital of France?"));
     assert!(text("gen_ai.output.messages").contains("Paris"));
@@ -173,7 +183,11 @@ async fn direct_model_calls_record_model_and_usage() {
         attr(chat, "gen_ai.request.model"),
         Some(json!("gpt-4o-mini"))
     );
-    assert_eq!(attr(chat, "gen_ai.usage.output_tokens"), Some(json!("3")));
+    assert_eq!(
+        attr(chat, "gen_ai.usage.output_tokens"),
+        Some(json!(3)),
+        "an integer"
+    );
 }
 
 #[tokio::test]

@@ -1,6 +1,7 @@
 //! Query observations (spans, generations, events).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Serialize, Serializer};
 
@@ -8,6 +9,10 @@ use crate::error::LangfuseError;
 use crate::http::{CallOptions, HttpClient};
 use crate::models::observations::ObservationV2;
 use crate::pagination::{CursorPaginated, Pages, impl_cursor_query, paginate_cursor};
+
+/// Timeout of each page request of [`ObservationsClient::list_pages`] (the
+/// Python SDK's `iter_observation_pages`): the server scans for up to 45 s.
+pub(crate) const PAGE_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 pub struct ObservationsClient {
@@ -116,13 +121,21 @@ impl ObservationsClient {
 
     /// Lazily stream every page of [`list`](Self::list), following `meta.cursor`;
     /// see [`pagination`](crate::pagination).
+    ///
+    /// Each page request has a 60 s timeout, as in the Python SDK, because the
+    /// server can scan for up to 45 s; the
+    /// [`RequestOptions::timeout`](crate::RequestOptions::timeout) of a
+    /// [`with_options`](crate::LangfuseClient::with_options) view replaces it.
     pub fn list_pages(
         &self,
         params: ListObservationsParams,
     ) -> Pages<'_, CursorPaginated<ObservationV2>> {
-        paginate_cursor(
-            params,
-            move |params| async move { self.list(&params).await },
-        )
+        paginate_cursor(params, move |params| async move {
+            let options = CallOptions {
+                default_timeout: Some(PAGE_FETCH_TIMEOUT),
+                ..CallOptions::default()
+            };
+            self.list_with_options(&params, options).await
+        })
     }
 }

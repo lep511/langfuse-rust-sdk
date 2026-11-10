@@ -371,8 +371,11 @@ impl ConfigBuilder {
 
         let credentials = format!("{}:{}", self.public_key, self.secret_key);
         let encoded = STANDARD.encode(credentials.as_bytes());
-        let auth_value = HeaderValue::from_str(&format!("Basic {encoded}"))
+        let mut auth_value = HeaderValue::from_str(&format!("Basic {encoded}"))
             .map_err(|e| LangfuseError::Config(format!("Invalid auth credentials: {e}")))?;
+        // Printed as `Sensitive` by `Debug`, so `{:?}` of the config never
+        // shows the (barely encoded) secret key.
+        auth_value.set_sensitive(true);
 
         let mut default_headers = self.extra_headers;
         default_headers.insert("x-langfuse-sdk-name", HeaderValue::from_static(SDK_NAME));
@@ -435,8 +438,9 @@ mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
 
-    use super::ConfigBuilder;
+    use super::{ConfigBuilder, STANDARD};
     use crate::error::LangfuseError;
+    use base64::Engine;
 
     fn from_vars(vars: &[(&str, &str)]) -> Result<ConfigBuilder, LangfuseError> {
         let vars: HashMap<String, String> = vars
@@ -619,5 +623,22 @@ mod tests {
             .unwrap();
         assert_eq!(config.base_url().as_str(), "https://override.example.com/");
         assert_eq!(config.timeout(), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn debug_output_hides_the_credentials() {
+        let config = super::ClientConfig::builder("pk-lf-debug", "sk-lf-secret-debug")
+            .build()
+            .unwrap();
+        let encoded = STANDARD.encode("pk-lf-debug:sk-lf-secret-debug");
+        let printed = format!("{config:?}");
+        assert!(!printed.contains(&encoded), "{printed}");
+        assert!(!printed.contains("sk-lf-secret-debug"), "{printed}");
+        assert!(printed.contains("Sensitive"), "{printed}");
+        // Still sent as is.
+        assert_eq!(
+            config.auth_header.to_str().unwrap(),
+            format!("Basic {encoded}")
+        );
     }
 }

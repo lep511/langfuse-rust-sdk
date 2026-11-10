@@ -403,6 +403,64 @@ async fn mapper_errors_fail_the_item() {
 }
 
 #[tokio::test]
+async fn panicking_mappers_and_evaluators_do_not_stop_the_run() {
+    let (client, server) = test_client().await;
+    mount_scores(&server).await;
+    Mock::given(method("GET"))
+        .and(path(OBSERVATIONS))
+        .respond_with(page(
+            vec![
+                observation("obs-1", Some("t"), "panic", "2024-06-15T10:00:01Z"),
+                observation("obs-2", Some("t"), "ok", "2024-06-15T10:00:01Z"),
+                observation(
+                    "obs-3",
+                    Some("t"),
+                    "evaluator-panic",
+                    "2024-06-15T10:00:01Z",
+                ),
+            ],
+            None,
+        ))
+        .mount(&server)
+        .await;
+    let panicking_mapper = |observation: ObservationV2| async move {
+        let output = observation.output.unwrap_or_default();
+        assert_ne!(output, json!("panic"), "mapper bug");
+        EvaluatorInput::new(observation.input.unwrap_or_default(), output)
+    };
+    let fragile = evaluator("fragile", |args: EvaluatorInput| async move {
+        if args.output == json!("evaluator-panic") {
+            panic!("evaluator bug");
+        }
+        Evaluation::numeric("fragile", 1.0)
+    });
+    let result = client
+        .run_batched_evaluation(
+            BatchEvaluationOptions::new(panicking_mapper)
+                .with_evaluator(length())
+                .with_evaluator(fragile),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.completed);
+    assert_eq!(result.total_items_fetched, 3);
+    assert_eq!(result.total_items_failed, 1);
+    assert_eq!(result.failed_item_ids, ["obs-1"]);
+    assert_eq!(result.error_summary.get("MapperError"), Some(&1));
+    let fragile_stats = result
+        .evaluator_stats
+        .iter()
+        .find(|s| s.name == "fragile")
+        .unwrap();
+    assert_eq!(fragile_stats.successful_runs, 1);
+    assert_eq!(fragile_stats.failed_runs, 1);
+    // length on obs-2 and obs-3, fragile on obs-2; flushed before returning.
+    assert_eq!(result.total_scores_created, 3);
+    assert_eq!(sent_scores(&server).await.len(), 3);
+}
+
+#[tokio::test]
 async fn invalid_filters_and_mismatched_tokens_are_rejected() {
     let (client, server) = test_client().await;
     for filter in ["{\"type\": \"string\"}", "not json"] {

@@ -372,6 +372,120 @@ async fn updates_overwrite_and_merge_metadata() {
 }
 
 #[tokio::test]
+async fn provider_usage_is_normalized() {
+    let (tracer, server) = setup(manual_flush()).await;
+    let generation = tracer.start_observation("anthropic", ObservationType::Generation);
+    generation.set_provider_usage(&json!({
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cache_read_input_tokens": 80,
+        "cache_creation": {"ephemeral_5m_input_tokens": 30},
+    }));
+    generation.end();
+    let span = tracer.start_observation("not-a-generation", ObservationType::Span);
+    span.set_provider_usage(&json!({"input_tokens": 1}));
+    span.end();
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    assert_eq!(
+        named(&spans, "anthropic").attr_json("langfuse.observation.usage_details"),
+        Some(json!({
+            "input": 100, "output": 20, "cache_read_input_tokens": 80,
+            "cache_creation_ephemeral_5m_input_tokens": 30, "cache_creation_input_tokens": 30,
+        }))
+    );
+    assert!(
+        named(&spans, "not-a-generation")
+            .attr("langfuse.observation.usage_details")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn metadata_never_pushes_core_attributes_out_of_the_span() {
+    let (tracer, server) = setup(manual_flush()).await;
+    let metadata: serde_json::Map<String, Value> =
+        (0..200).map(|i| (format!("k{i:03}"), json!(i))).collect();
+    let generation = tracer.start_observation("big", ObservationType::Generation);
+    generation
+        .set_input("question")
+        .set_metadata(&Value::Object(metadata))
+        .set_model("gpt-4o")
+        .set_usage_details(&json!({"input": 3, "output": 5}))
+        .set_output("answer")
+        .set_status_message("done");
+    generation.end();
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    let span = named(&spans, "big");
+    let attributes = span.span["attributes"].as_array().unwrap();
+    assert_eq!(attributes.len(), 128, "the span is full, not over");
+    // Keys after `langfuse.observation.metadata.*` in alphabetical order
+    // used to be the ones the SDK dropped.
+    assert_eq!(
+        span.attr_str("langfuse.observation.model.name").as_deref(),
+        Some("gpt-4o")
+    );
+    assert_eq!(
+        span.attr_json("langfuse.observation.usage_details"),
+        Some(json!({"input": 3, "output": 5}))
+    );
+    assert_eq!(
+        span.attr_str("langfuse.observation.output").as_deref(),
+        Some("answer")
+    );
+    assert_eq!(
+        span.attr_str("langfuse.observation.status_message")
+            .as_deref(),
+        Some("done")
+    );
+    assert_eq!(
+        span.attr_str("langfuse.observation.type").as_deref(),
+        Some("generation")
+    );
+    // Metadata is cut from the tail, in key order.
+    assert!(span.attr("langfuse.observation.metadata.k000").is_some());
+    assert!(span.attr("langfuse.observation.metadata.k199").is_none());
+}
+
+#[tokio::test]
+async fn propagated_metadata_leaves_room_for_core_attributes_first() {
+    let (tracer, server) = setup(manual_flush()).await;
+    let mut attributes = PropagatedAttributes::default();
+    for i in 0..123 {
+        attributes = attributes.with_metadata(format!("p{i:03}"), &json!(i));
+    }
+    let generation = tracer.start_observation("crowded", ObservationType::Generation);
+    propagate_attributes(attributes, async {
+        let child = generation.start_child("llm", ObservationType::Generation);
+        child
+            .set_metadata(&json!({"own_a": 1, "own_b": 2, "own_c": 3}))
+            .set_model("gpt-4o")
+            .set_usage_details(&json!({"input": 1}))
+            .set_output("answer");
+        child.end();
+    })
+    .await;
+    generation.end();
+    tracer.flush().await;
+
+    let spans = exported(&server).await;
+    let child = named(&spans, "llm");
+    assert!(child.span["attributes"].as_array().unwrap().len() <= 128);
+    assert_eq!(
+        child.attr_str("langfuse.observation.model.name").as_deref(),
+        Some("gpt-4o")
+    );
+    assert!(child.attr("langfuse.observation.usage_details").is_some());
+    assert!(child.attr("langfuse.observation.output").is_some());
+    // The propagated metadata is on the span; its own metadata did not fit.
+    assert!(child.attr("langfuse.trace.metadata.p000").is_some());
+    assert!(child.attr("langfuse.observation.metadata.own_c").is_none());
+}
+
+#[tokio::test]
 async fn error_level_marks_the_span_as_failed() {
     let (tracer, server) = setup(manual_flush()).await;
     let span = tracer.start_observation("failing", ObservationType::Span);

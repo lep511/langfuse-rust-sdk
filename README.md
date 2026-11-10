@@ -20,7 +20,8 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 - Media attachments: upload, reference strings, resolution back to data URIs, and automatic upload of base64 media in traces and dataset items
 - Datasets with all their items (`client.get_dataset`), experiments on datasets or local data with item, composite and run evaluators (`tracer.run_experiment`, feature `otel`), and batch evaluation of stored observations (`client.run_batched_evaluation`)
 - `#[observe]` to trace plain functions, sync or async, including streams and iterators (feature `macros`)
-- Integrations: traced OpenAI calls through `async-openai` (feature `openai`) and a `tracing` bridge that records rig agents and `#[tracing::instrument]` spans (feature `tracing-layer`)
+- Integrations: traced OpenAI calls through `async-openai` (feature `openai`), traced Amazon Bedrock Converse calls through `aws-sdk-bedrockruntime` (feature `bedrock`), and a `tracing` bridge that records rig agents and `#[tracing::instrument]` spans (feature `tracing-layer`)
+- Token usage of other providers (Anthropic, Bedrock, Vertex AI / Gemini, IBM, LangChain-style) translated into Langfuse usage details (`usage::normalize_usage`, `Observation::set_provider_usage`)
 - Skills discovery (`skills::discover_skills`) and the skills available to an agent on its spans
 - Per-request options on a client view (`client.with_options`): timeout, retries, headers, query and body parameters, response headers
 
@@ -63,7 +64,7 @@ The unstable APIs may change without notice upstream. Enable them with:
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.9", features = ["unstable"] }
+langfuse-rust-sdk = { version = "0.10", features = ["unstable"] }
 ```
 
 ### Cargo features
@@ -75,6 +76,7 @@ langfuse-rust-sdk = { version = "0.9", features = ["unstable"] }
 | `macros` | `#[observe]` (enables `otel`) |
 | `tracing-layer` | `otel::tracing_layer`, the bridge from the `tracing` crate (enables `otel`) |
 | `openai` | `openai::OpenAI`, traced `async-openai` 0.43 calls (enables `otel`) |
+| `bedrock` | `bedrock::Bedrock`, traced `aws-sdk-bedrockruntime` Converse calls (enables `otel`) |
 | `blocking` | `blocking::LangfuseClient`, on an internal Tokio runtime |
 
 ## Quick Start
@@ -171,6 +173,7 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`observe`](examples/observe.rs) | Trace an agent, a retriever, a streamed generation and a failing tool with `#[observe]`, with skills (`--features macros`, writes one trace) |
 | [`rig_tracing`](examples/rig_tracing.rs) | Trace a rig agent through `otel::tracing_layer` (`--features tracing-layer`, needs an OpenAI-compatible endpoint, writes one trace) |
 | [`openai_tracing`](examples/openai_tracing.rs) | Trace a chat completion, a streamed one and an embedding made with async-openai (`--features openai`, needs `OPENAI_API_KEY`, writes one trace) |
+| [`bedrock_tracing`](examples/bedrock_tracing.rs) | Trace a Converse call and a streamed one made with aws-sdk-bedrockruntime (`--features bedrock`, needs AWS credentials with Bedrock access, writes one trace) |
 | [`blocking`](examples/blocking.rs) | The blocking client from a plain `main`, with a per-request options view (`--features blocking`, read-only) |
 
 ## Configuration
@@ -182,7 +185,7 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | `LANGFUSE_PUBLIC_KEY` | Public API key (required) |
 | `LANGFUSE_SECRET_KEY` | Secret API key (required) |
 | `LANGFUSE_BASE_URL` | API base URL (default: `https://cloud.langfuse.com`); `LANGFUSE_HOST` is read as a deprecated fallback |
-| `LANGFUSE_TIMEOUT` | Request timeout in seconds (default: 30) |
+| `LANGFUSE_TIMEOUT` | Request timeout in seconds (default: 30, with a 5 s connect timeout) |
 
 ```rust
 use langfuse_rust_sdk::{ClientConfig, ConfigBuilder, LangfuseClient};
@@ -200,7 +203,7 @@ use std::time::Duration;
 
 let config = ClientConfig::builder("pk-lf-...", "sk-lf-...")
     .base_url("https://self-hosted.example.com")  // default: https://cloud.langfuse.com
-    .timeout(Duration::from_secs(60))              // default: 30s
+    .timeout(Duration::from_secs(60))              // default: 30s (connect: 5s)
     .retry_policy(RetryPolicy {
         initial_backoff: Duration::from_millis(500),
         max_backoff: Duration::from_secs(30),
@@ -274,7 +277,8 @@ let options = GetPromptOptions::default()
     .with_label("production")                             // default; or .with_version(3)
     .with_cache_ttl(Duration::from_secs(300))             // default: 60 s (`prompt_cache_ttl`)
     .with_fallback(PromptFallback::Text("Summarize: {{text}}".into()));
-    // also: with_max_retries, with_fetch_timeout
+    // also: with_max_retries, with_fetch_timeout (default: 5 s per attempt, or the
+    // client timeout if you set one)
 let prompt = client.prompts.get_cached("summarizer", &options).await?;
 println!("{:?}", prompt.variables());                     // ["text"]
 let text = prompt.compile(&json!({"text": "..."}))?.into_text();
@@ -302,7 +306,7 @@ are inserted as compact JSON.
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.9", features = ["otel"] }
+langfuse-rust-sdk = { version = "0.10", features = ["otel"] }
 ```
 
 A `LangfuseTracer` creates observations as OpenTelemetry spans and exports them in the
@@ -445,6 +449,41 @@ in the Python SDK: messages, model parameters with their defaults, output, usage
 computes the cost), time to first token for streams, and errors with level `ERROR`. Built for
 `async-openai` 0.43.
 
+### Amazon Bedrock (feature `bedrock`)
+
+```rust
+use langfuse_rust_sdk::bedrock::Bedrock;
+
+let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+let bedrock = Bedrock::new(aws_sdk_bedrockruntime::Client::new(&aws), &tracer);
+let response = bedrock
+    .converse(|r| r.model_id("us.anthropic.claude-opus-5-5").messages(message))
+    .with_name("summarize")
+    .send()
+    .await?;
+let mut stream = bedrock
+    .converse_stream(|r| r.model_id(model).messages(message))
+    .send()
+    .await?;                                                  // recorded when it ends
+while let Some(event) = stream.recv().await? { /* ... */ }
+```
+
+Converse and ConverseStream calls, for every model Bedrock serves (Claude, Nova, Llama, Mistral,
+...), become generations: the system prompt and messages (images and documents as media), the
+tools, the model ID, the inference parameters, the output message, the usage with prompt-cache
+reads and writes (`input_cache_read`, `input_cache_creation`, priced by Langfuse), the stop
+reason, time to first token for streams, and errors with level `ERROR`. See
+[`bedrock_tracing`](examples/bedrock_tracing.rs).
+
+### Usage of other providers
+
+For calls traced by hand, `generation.set_provider_usage(&usage)` records the token usage a
+provider returned in its own shape, translated like the Python SDK's LangChain integration does
+(`usage::normalize_usage`): Anthropic (`input_tokens`, `cache_read_input_tokens`,
+`cache_creation` tiers), Bedrock invocation metrics, Vertex AI / Gemini (`prompt_token_count`,
+per-modality details), IBM, and LangChain-style `input_token_details`. Through the `tracing`
+bridge, `gen_ai.usage.*` counts (recorded as strings by `tracing`) are exported as integers.
+
 ## Scores in the background
 
 `client.score(..)` queues a score and returns at once; a background task sends scores in
@@ -567,7 +606,9 @@ exported spans), like `reqwest::blocking`; its methods panic when called inside 
 Every list method returning `Paginated<T>` or `CursorPaginated<T>` has a `*_pages` companion
 (`observations.list_pages`, `datasets.list_pages`, `annotation_queues.list_items_pages`, ...)
 that returns a lazy stream of pages. `.items()` flattens it into a stream of items, and
-`.take(n)` caps the number of items without requesting further pages:
+`.take(n)` caps the number of items without requesting further pages. Each page request of
+`observations.list_pages` has a 60 s timeout, as in the Python SDK (the server can scan for up
+to 45 s); the timeout of a `with_options` view replaces it:
 
 ```rust
 use futures::TryStreamExt;
@@ -609,10 +650,11 @@ All API methods return `Result<T, LangfuseError>`. The error type maps HTTP stat
 | 409 | `Conflict` |
 | 412 | `PreconditionFailed` |
 | 429 | `RateLimited` (with optional `retry_after` duration) |
+| other 4xx (402, 413, 422, ...) | `ClientError` |
 | 503 | `ServiceUnavailable` |
 | other 5xx | `ServerError` |
 
-`LangfuseError` is `#[non_exhaustive]`, so `match` statements need a wildcard arm. `err.body()` returns the parsed JSON error body. The evaluators, evaluation-rules and unstable endpoints return a structured body that `PublicApiError::from_error(&err)` (or `UnstablePublicApiError::from_error`) parses.
+`LangfuseError` is `#[non_exhaustive]`, so `match` statements need a wildcard arm. `err.status()` returns the HTTP status, `err.message()` the server's message (the `message` or `error` field of a JSON body, the start of a body that is not JSON, such as a proxy's HTML page, or the status reason of an empty body) and `err.body()` the parsed JSON error body. The evaluators, evaluation-rules and unstable endpoints return a structured body that `PublicApiError::from_error(&err)` (or `UnstablePublicApiError::from_error`) parses.
 
 Failed requests are retried with exponential backoff, honoring `Retry-After`, as long as repeating them cannot duplicate their effect:
 
@@ -624,38 +666,6 @@ Failed requests are retried with exponential backoff, honoring `Retry-After`, as
 | Timeout or connection dropped mid-request | retried | not retried |
 
 OTLP trace ingestion is retried like an idempotent request, since spans carry their IDs. 409 is never retried, because it signals a real conflict. See [`error_handling`](examples/error_handling.rs) for patterns.
-
-## Project Structure
-
-```
-src/
-  lib.rs            — LangfuseClient, crate root, re-exports
-  config.rs         — ClientConfig builder
-  error.rs          — LangfuseError enum
-  http.rs           — HttpClient (reqwest wrapper with auth, retry, path encoding), RequestOptions
-  retry.rs          — RetryPolicy (exponential backoff + jitter)
-  pagination.rs     — Paginated<T>, CursorPaginated<T>, query param types, Pages/Items streams
-  ids.rs            — Trace and observation ID generation (random or seeded)
-  prompt_cache.rs   — In-memory cache behind prompts.get_cached (crate-private)
-  otel/             — Tracing on OpenTelemetry (feature `otel`): tracer, observations,
-                      propagation, span processor, batched exporter, run_experiment,
-                      #[observe] runtime, tracing layer
-  skills.rs         — discover_skills and SkillReference
-  openai.rs         — Traced async-openai calls (feature `openai`)
-  blocking/         — Blocking client (feature `blocking`); api.rs is generated by
-                      scripts/generate_blocking.py
-  media.rs          — LangfuseMedia, references, upload, media detection in traced data
-  dataset.rs        — get_dataset and create_dataset_item (crate-private module)
-  experiment.rs     — Evaluation, evaluator and task traits, experiment options and results
-  batch_evaluation.rs — run_batched_evaluation, resume tokens and results
-  background.rs     — Score queue and media upload tasks of LangfuseClient (crate-private)
-  models/           — Typed request/response structs for all resources
-  api/              — Resource clients (one per API group)
-macros/             — langfuse-rust-sdk-macros: the #[observe] attribute (feature `macros`)
-examples/           — 29 runnable examples covering all major features
-tests/              — wiremock HTTP tests (api_*), serde tests, config tests, trybuild UI tests
-                      (638 tests in total with --all-features, 503 without)
-```
 
 ## Requirements
 

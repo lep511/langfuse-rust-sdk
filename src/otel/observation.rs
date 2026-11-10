@@ -273,6 +273,9 @@ struct Inner {
     recording: bool,
     /// Effective environment: propagated, else the tracer default.
     environment: Option<String>,
+    /// Attributes the span got when it started (from the builder and the
+    /// processor's `on_start`); they count against the attribute limit.
+    start_attributes: Vec<KeyValue>,
     shared: Arc<TracerShared>,
     state: Mutex<State>,
 }
@@ -322,10 +325,13 @@ impl Observation {
 
         let recording = span.is_recording();
         let span_context = span.span_context().clone();
-        // Attributes the processor propagated in `on_start`.
-        let propagated_environment = span.exported_data().and_then(|data| {
-            attr::string_attribute(&data.attributes, attr::ENVIRONMENT).map(str::to_owned)
-        });
+        // Including the attributes the processor propagated in `on_start`.
+        let start_attributes = span
+            .exported_data()
+            .map(|data| data.attributes)
+            .unwrap_or_default();
+        let propagated_environment =
+            attr::string_attribute(&start_attributes, attr::ENVIRONMENT).map(str::to_owned);
 
         let mut state = State::default();
         for kv in initial {
@@ -355,6 +361,7 @@ impl Observation {
                 start_time,
                 recording,
                 environment,
+                start_attributes,
                 shared: Arc::clone(shared),
                 state: Mutex::new(state),
             }),
@@ -550,6 +557,39 @@ impl Observation {
         self.set_generation_json(attr::OBSERVATION_USAGE_DETAILS, usage, "usage_details")
     }
 
+    /// Record the token usage a provider reported, in its own shape
+    /// (Anthropic, Amazon Bedrock, Google Vertex AI / Gemini, IBM,
+    /// LangChain-style or OpenAI usage), translated by
+    /// [`normalize_usage`](crate::usage::normalize_usage) so that Langfuse
+    /// counts cached and per-modality tokens and computes the right costs
+    /// (generations and embeddings only).
+    ///
+    /// ```rust,no_run
+    /// # fn example(generation: &langfuse_rust_sdk::otel::Observation) {
+    /// // An Anthropic response's `usage`, recorded as
+    /// // {"input": 2095, "output": 503, "cache_read_input_tokens": 1800}.
+    /// generation.set_provider_usage(&serde_json::json!({
+    ///     "input_tokens": 2095,
+    ///     "output_tokens": 503,
+    ///     "cache_read_input_tokens": 1800,
+    /// }));
+    /// # }
+    /// ```
+    pub fn set_provider_usage<T: Serialize + ?Sized>(&self, usage: &T) -> &Self {
+        if self.generation_only("usage_details")
+            && self.inner.recording
+            && let Some(value) = to_json(usage, "usage_details")
+        {
+            match crate::usage::normalize_usage(&value) {
+                Some(usage) => {
+                    self.set_usage_details(&usage);
+                }
+                None => tracing::debug!("provider usage holds no token counts; ignored"),
+            }
+        }
+        self
+    }
+
     /// Record costs, e.g. `{"input": 0.001, "output": 0.002}` (generations and
     /// embeddings only).
     pub fn set_cost_details<T: Serialize + ?Sized>(&self, cost: &T) -> &Self {
@@ -728,10 +768,14 @@ impl Inner {
                 return;
             }
             state.ended = true;
-            let attributes: Vec<KeyValue> = std::mem::take(&mut state.attributes)
-                .into_iter()
-                .map(|(k, v)| KeyValue::new(k, v))
-                .collect();
+            let (attributes, dropped) = within_attribute_limit(
+                &self.start_attributes,
+                std::mem::take(&mut state.attributes),
+                self.shared.max_attributes,
+            );
+            if !dropped.is_empty() {
+                warn_dropped_attributes(&self.id, self.shared.max_attributes, &dropped);
+            }
             let status = (state.level == Some(Level::Error))
                 .then(|| Status::error(state.status_message.clone().unwrap_or_default()));
             (attributes, status)
@@ -755,6 +799,114 @@ impl Drop for Inner {
     fn drop(&mut self) {
         self.finish();
     }
+}
+
+/// Attributes kept first when a span runs out of attribute slots, most
+/// important first (the attributes the Python SDK reserves room for, then
+/// the trace-level ones).
+const CORE_ATTRIBUTES: &[&str] = &[
+    attr::OBSERVATION_TYPE,
+    attr::OBSERVATION_LEVEL,
+    attr::OBSERVATION_STATUS_MESSAGE,
+    attr::OBSERVATION_OUTPUT,
+    attr::OBSERVATION_INPUT,
+    attr::OBSERVATION_MODEL,
+    attr::OBSERVATION_USAGE_DETAILS,
+    attr::OBSERVATION_COST_DETAILS,
+    attr::OBSERVATION_COMPLETION_START_TIME,
+    attr::OBSERVATION_MODEL_PARAMETERS,
+    attr::OBSERVATION_PROMPT_NAME,
+    attr::OBSERVATION_PROMPT_VERSION,
+    attr::ENVIRONMENT,
+    attr::VERSION,
+    attr::RELEASE,
+    attr::OBSERVATION_SKILLS_AVAILABLE,
+    attr::AS_ROOT,
+    attr::TRACE_USER_ID,
+    attr::TRACE_SESSION_ID,
+    attr::TRACE_NAME,
+    attr::TRACE_TAGS,
+    attr::TRACE_PUBLIC,
+];
+
+/// Whether `key` holds (part of) observation or trace metadata.
+fn is_metadata_key(key: &str) -> bool {
+    [attr::OBSERVATION_METADATA, attr::TRACE_METADATA]
+        .iter()
+        .any(|prefix| {
+            key.strip_prefix(prefix)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        })
+}
+
+/// The buffered `writes` that fit into a span already holding `start` and at
+/// most `limit` attributes, plus the keys left out.
+///
+/// The SDK appends every write (also of a key the span already has) and
+/// silently drops what exceeds the limit, so writes equal to an attribute
+/// the span already has are skipped, and when the rest does not fit, the
+/// metadata keys go first, then the other keys by [`CORE_ATTRIBUTES`]
+/// priority. Like the Python SDK, which never lets metadata push out the
+/// input, output, model or usage.
+fn within_attribute_limit(
+    start: &[KeyValue],
+    writes: BTreeMap<String, OtelValue>,
+    limit: usize,
+) -> (Vec<KeyValue>, Vec<String>) {
+    let mut writes: Vec<(String, OtelValue)> = writes
+        .into_iter()
+        .filter(|(key, value)| {
+            // The latest start value of the key, as the exporter keeps the last one.
+            start
+                .iter()
+                .rev()
+                .find(|kv| kv.key.as_str() == key)
+                .is_none_or(|kv| &kv.value != value)
+        })
+        .collect();
+    let capacity = limit.saturating_sub(start.len());
+    let mut dropped = Vec::new();
+    if writes.len() > capacity {
+        let rank = |key: &str| {
+            if is_metadata_key(key) {
+                (1, 0)
+            } else {
+                let core = CORE_ATTRIBUTES.iter().position(|core| *core == key);
+                (0, core.unwrap_or(CORE_ATTRIBUTES.len()))
+            }
+        };
+        // Stable: equal ranks keep the key order.
+        writes.sort_by_key(|(key, _)| rank(key));
+        dropped = writes
+            .split_off(capacity)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+    }
+    let kept = writes
+        .into_iter()
+        .map(|(k, v)| KeyValue::new(k, v))
+        .collect();
+    (kept, dropped)
+}
+
+fn warn_dropped_attributes(observation: &str, limit: usize, dropped: &[String]) {
+    let metadata = dropped.iter().filter(|key| is_metadata_key(key)).count();
+    let prefix = format!("{}.", attr::OBSERVATION_METADATA);
+    let examples: Vec<&str> = dropped
+        .iter()
+        .take(5)
+        .map(|key| key.strip_prefix(&prefix).unwrap_or(key))
+        .collect();
+    tracing::warn!(
+        observation,
+        limit,
+        dropped_metadata = metadata,
+        dropped_other = dropped.len() - metadata,
+        examples = %examples.join(", "),
+        "dropped attributes to stay within the span attribute limit \
+         (OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT); metadata keys go first"
+    );
 }
 
 /// Copy the propagated attributes and baggage of the current context onto `cx`.
@@ -811,4 +963,106 @@ pub fn current_observation_id() -> Option<String> {
     span_context
         .is_valid()
         .then(|| span_context.span_id().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn writes(keys: &[&str]) -> BTreeMap<String, OtelValue> {
+        keys.iter()
+            .map(|k| ((*k).to_owned(), OtelValue::from(format!("value of {k}"))))
+            .collect()
+    }
+
+    fn keys(kept: &[KeyValue]) -> Vec<&str> {
+        kept.iter().map(|kv| kv.key.as_str()).collect()
+    }
+
+    #[test]
+    fn everything_fits_under_the_limit() {
+        let (kept, dropped) =
+            within_attribute_limit(&[], writes(&[attr::OBSERVATION_OUTPUT, "custom"]), 128);
+        assert_eq!(
+            keys(&kept),
+            ["custom", attr::OBSERVATION_OUTPUT],
+            "key order"
+        );
+        assert!(dropped.is_empty());
+    }
+
+    #[test]
+    fn writes_equal_to_start_attributes_take_no_slot() {
+        let start = [KeyValue::new(attr::OBSERVATION_TYPE, "span")];
+        let mut buffered = writes(&[attr::OBSERVATION_OUTPUT]);
+        buffered.insert(attr::OBSERVATION_TYPE.into(), "span".into());
+        let (kept, dropped) = within_attribute_limit(&start, buffered, 2);
+        assert_eq!(keys(&kept), [attr::OBSERVATION_OUTPUT]);
+        assert!(dropped.is_empty());
+
+        // A changed value still needs a slot.
+        let mut buffered = writes(&[]);
+        buffered.insert(attr::OBSERVATION_TYPE.into(), "generation".into());
+        let (kept, _) = within_attribute_limit(&start, buffered, 2);
+        assert_eq!(keys(&kept), [attr::OBSERVATION_TYPE]);
+    }
+
+    #[test]
+    fn metadata_goes_first_then_the_least_important_keys() {
+        let metadata_a = format!("{}.a", attr::OBSERVATION_METADATA);
+        let metadata_b = format!("{}.b", attr::OBSERVATION_METADATA);
+        let trace_metadata = format!("{}.t", attr::TRACE_METADATA);
+        let start = [KeyValue::new("already", "there")];
+        let buffered = writes(&[
+            &metadata_a,
+            &metadata_b,
+            &trace_metadata,
+            "custom.key",
+            attr::OBSERVATION_USAGE_DETAILS,
+            attr::OBSERVATION_MODEL,
+            attr::OBSERVATION_OUTPUT,
+        ]);
+
+        let (kept, dropped) = within_attribute_limit(&start, buffered.clone(), 6);
+        assert_eq!(
+            keys(&kept),
+            [
+                attr::OBSERVATION_OUTPUT,
+                attr::OBSERVATION_MODEL,
+                attr::OBSERVATION_USAGE_DETAILS,
+                "custom.key",
+                metadata_a.as_str(),
+            ]
+        );
+        assert_eq!(dropped, [metadata_b.as_str(), trace_metadata.as_str()]);
+
+        // Without room for every core key, the most important ones stay.
+        let (kept, dropped) = within_attribute_limit(&start, buffered, 3);
+        assert_eq!(
+            keys(&kept),
+            [attr::OBSERVATION_OUTPUT, attr::OBSERVATION_MODEL]
+        );
+        assert_eq!(dropped.len(), 5);
+    }
+
+    #[test]
+    fn a_full_span_takes_nothing() {
+        let start: Vec<KeyValue> = (0..4).map(|i| KeyValue::new(format!("s{i}"), i)).collect();
+        let (kept, dropped) =
+            within_attribute_limit(&start, writes(&[attr::OBSERVATION_OUTPUT]), 4);
+        assert!(kept.is_empty());
+        assert_eq!(dropped, [attr::OBSERVATION_OUTPUT]);
+    }
+
+    #[test]
+    fn metadata_keys() {
+        assert!(is_metadata_key(attr::OBSERVATION_METADATA));
+        assert!(is_metadata_key(&format!(
+            "{}.x",
+            attr::OBSERVATION_METADATA
+        )));
+        assert!(is_metadata_key(&format!("{}.x", attr::TRACE_METADATA)));
+        assert!(!is_metadata_key("langfuse.observation.metadatax"));
+        assert!(!is_metadata_key(attr::OBSERVATION_OUTPUT));
+    }
 }

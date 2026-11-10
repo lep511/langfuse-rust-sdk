@@ -23,6 +23,10 @@ const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
+/// Connect timeout of the SDK-built `reqwest::Client` (the connect phase of
+/// the Python SDK's 5 s default), so an unreachable host fails fast.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Percent-encode a value for use as a single URL path segment.
 ///
 /// Slashes are encoded too, so a prompt named `folder/sub/name` becomes
@@ -76,7 +80,11 @@ pub struct ResponseInfo<'a> {
 /// ([`get_cached`](crate::api::prompts::PromptsClient::get_cached)'s
 /// `max_retries` and `fetch_timeout`, the page requests of
 /// [`run_batched_evaluation`](crate::LangfuseClient::run_batched_evaluation))
-/// keep them.
+/// keep them. The `timeout` does replace the default timeouts of
+/// [`get_cached`](crate::api::prompts::PromptsClient::get_cached) (5 s) and
+/// of the pages of
+/// [`observations.list_pages`](crate::api::observations::ObservationsClient::list_pages)
+/// (60 s).
 #[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct RequestOptions {
@@ -220,6 +228,9 @@ pub(crate) struct CallOptions<'a> {
     pub max_retries: Option<u32>,
     /// Timeout for this request instead of the client timeout.
     pub timeout: Option<Duration>,
+    /// Timeout for this request when neither `timeout` nor the view's
+    /// [`RequestOptions::timeout`] is set; it replaces the client timeout.
+    pub default_timeout: Option<Duration>,
     /// Whether the request can be repeated without duplicating its effect,
     /// instead of deciding from the HTTP method.
     pub idempotent: Option<bool>,
@@ -247,17 +258,23 @@ struct Shared {
     /// Per-request timeout, set only for a custom client with an explicit timeout
     /// (the SDK-built client carries its timeout itself).
     request_timeout: Option<Duration>,
+    /// Whether the client timeout was chosen by the user: an explicit
+    /// [`ConfigBuilder::timeout`](crate::ConfigBuilder::timeout) (or
+    /// `LANGFUSE_TIMEOUT`), or a custom `reqwest::Client`.
+    timeout_configured: bool,
 }
 
 impl HttpClient {
     /// Build a new HTTP client from resolved configuration.
     pub fn new(config: ClientConfig) -> Result<Self, LangfuseError> {
         let timeout = config.timeout();
+        let timeout_configured = config.timeout.is_some() || config.http_client.is_some();
         let (client, request_timeout) = match config.http_client {
             Some(client) => (client, config.timeout),
             None => {
                 let client = Client::builder()
                     .timeout(timeout)
+                    .connect_timeout(DEFAULT_CONNECT_TIMEOUT.min(timeout))
                     .build()
                     .map_err(LangfuseError::Transport)?;
                 (client, None)
@@ -272,6 +289,7 @@ impl HttpClient {
                 default_headers: config.default_headers,
                 retry_policy: config.retry_policy,
                 request_timeout,
+                timeout_configured,
             }),
             options: RequestOptions::default(),
         })
@@ -289,6 +307,12 @@ impl HttpClient {
     /// The overrides applied to every request of this client.
     pub fn options(&self) -> &RequestOptions {
         &self.options
+    }
+
+    /// Whether the user chose the client timeout (an explicit timeout or a
+    /// custom `reqwest::Client`), rather than the SDK default.
+    pub(crate) fn timeout_configured(&self) -> bool {
+        self.shared.timeout_configured
     }
 
     /// The configured API base URL.
@@ -678,6 +702,7 @@ impl HttpClient {
         let timeout = options
             .timeout
             .or(self.options.timeout)
+            .or(options.default_timeout)
             .or(shared.request_timeout);
         let max_retries = options
             .max_retries

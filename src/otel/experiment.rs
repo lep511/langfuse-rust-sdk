@@ -25,7 +25,7 @@ use crate::error::LangfuseError;
 use crate::experiment::{
     CompositeEvaluator, CompositeEvaluatorInput, Evaluation, Evaluator, EvaluatorInput,
     ExperimentItem, ExperimentItemResult, ExperimentOptions, ExperimentResult, RunEvaluatorInput,
-    Task, python_float_repr, python_isoformat,
+    Task, catch_panic, python_float_repr, python_isoformat,
 };
 use crate::http::encode_path_segment;
 use crate::ids::{create_observation_id, seeded_hex};
@@ -49,8 +49,9 @@ impl LangfuseTracer {
     /// other threads): move CPU-heavy work to `tokio::task::spawn_blocking`.
     ///
     /// Failures do not stop the run: an item without input or whose task
-    /// fails is logged, marked as an error and left out of the results; a
-    /// failing evaluator is recorded on its span and the others still run.
+    /// fails (returns an error or panics) is logged, marked as an error and
+    /// left out of the results; a failing (or panicking) evaluator is recorded
+    /// on its span and the others still run.
     ///
     /// The experiment ID is [`experiment_id`](ExperimentOptions::experiment_id)
     /// if set. Otherwise, for dataset items it is derived from the project,
@@ -187,7 +188,7 @@ impl LangfuseTracer {
         if !run_evaluators.is_empty() {
             let input = RunEvaluatorInput::new(item_results);
             for evaluator in &run_evaluators {
-                match evaluator.evaluate(input.clone()).await {
+                match catch_panic(async { evaluator.evaluate(input.clone()).await }).await {
                     Ok(evaluations) => run_evaluations.extend(evaluations),
                     Err(err) => {
                         tracing::error!(evaluator = evaluator.name(), error = %err, "run evaluator failed");
@@ -350,7 +351,10 @@ impl<T: Task> ItemRun<'_, T> {
         run_span.buffer(inherited_attributes(&task_cx));
         task_span.set_metadata(&observation_metadata);
 
-        let outcome = self.task.run(item.clone()).with_context(task_cx).await;
+        let task_item = item.clone();
+        let outcome = catch_panic(async { self.task.run(task_item).await })
+            .with_context(task_cx)
+            .await;
         let output = match outcome {
             Ok(output) => output,
             Err(err) => {
@@ -412,7 +416,10 @@ impl<T: Task> ItemRun<'_, T> {
                     "evaluator_kind": "item",
                     "evaluator_index": index,
                 }));
-                match span.in_scope(evaluator.evaluate(input.clone())).await {
+                let evaluated = span.in_scope(catch_panic(async {
+                    evaluator.evaluate(input.clone()).await
+                }));
+                match evaluated.await {
                     Ok(results) => {
                         span.set_output(&results);
                         span.end();
@@ -437,7 +444,10 @@ impl<T: Task> ItemRun<'_, T> {
                     .start_observation(composite.name(), ObservationType::Evaluator);
                 span.set_input(&composite_input)
                     .set_metadata(&json!({"evaluator_kind": "composite"}));
-                match span.in_scope(composite.evaluate(composite_input)).await {
+                let evaluated = span.in_scope(catch_panic(async {
+                    composite.evaluate(composite_input).await
+                }));
+                match evaluated.await {
                     Ok(results) => {
                         span.set_output(&results);
                         span.end();

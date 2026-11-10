@@ -35,9 +35,11 @@
 //! # let _ = (exact_match, length, json!(null));
 //! ```
 
+use std::any::Any;
 use std::collections::BTreeSet;
 use std::fmt::{self, Display};
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -563,6 +565,30 @@ where
                 .map_err(|err| format!("task output cannot be serialized: {err}"))
         }
     }
+}
+
+/// Run `future` (a task, an evaluator or a mapper), turning a panic into an
+/// error message, so one item cannot stop an experiment or a batch
+/// evaluation: like the Python SDK, which catches every exception per item.
+///
+/// Wrap the call itself in the future (`catch_panic(async { f(x).await })`)
+/// so a panic before the first `.await` is caught too.
+pub(crate) async fn catch_panic<T>(
+    future: impl Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(result) => result,
+        Err(payload) => Err(format!("panicked: {}", panic_message(&*payload))),
+    }
+}
+
+/// The message of a panic payload (`panic!` with a literal or a format).
+fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("Box<dyn Any>")
 }
 
 /// One local data item of an experiment (not stored in Langfuse).

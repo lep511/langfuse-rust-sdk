@@ -135,6 +135,9 @@ pub mod experiment;
 #[cfg(feature = "otel")]
 pub mod otel;
 // Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+#[cfg(feature = "bedrock")]
+pub mod bedrock;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
 #[cfg(feature = "openai")]
 pub mod openai;
 /// Pagination helpers for list endpoints.
@@ -146,6 +149,8 @@ pub mod retry;
 pub mod skills;
 /// Standalone utilities (YAML processing).
 pub mod tools;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+pub mod usage;
 
 /// Trace a function as a Langfuse observation (feature `macros`).
 ///

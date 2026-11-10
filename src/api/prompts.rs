@@ -30,6 +30,10 @@ use crate::models::prompts::{BasePrompt, ChatPromptMessage, CreatePromptRequest,
 use crate::pagination::{Pages, Paginated, impl_page_query, paginate_pages};
 use crate::prompt_cache::{CacheKey, Lookup, PromptCache};
 
+/// Fetch timeout of [`PromptsClient::get_cached`] when neither the call, a
+/// view nor the client configuration chooses one (the Python SDK default).
+const DEFAULT_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Clone)]
 pub struct PromptsClient {
     pub(crate) http: Arc<HttpClient>,
@@ -90,9 +94,18 @@ pub struct GetPromptOptions {
     /// Retries of the fetch instead of the client's
     /// [`RetryPolicy::max_retries`](crate::RetryPolicy::max_retries).
     pub max_retries: Option<u32>,
-    /// Timeout of each fetch attempt instead of the client timeout. Timeouts
-    /// are retried, so a failing call can take up to
-    /// `(max_retries + 1) × fetch_timeout` plus the backoff delays.
+    /// Timeout of each fetch attempt. Timeouts are retried, so a failing call
+    /// can take up to `(max_retries + 1) × fetch_timeout` plus the backoff
+    /// delays.
+    ///
+    /// When unset: the [`RequestOptions::timeout`](crate::RequestOptions::timeout)
+    /// of a [`with_options`](crate::LangfuseClient::with_options) view, else
+    /// the client timeout if you chose one
+    /// ([`ConfigBuilder::timeout`](crate::ConfigBuilder::timeout),
+    /// `LANGFUSE_TIMEOUT` or a custom `reqwest::Client`), else 5 s, as in the
+    /// Python SDK, so a cold start returns the fallback in seconds when
+    /// Langfuse does not answer (the general default of 30 s would take about
+    /// 90 s with the default retries).
     pub fetch_timeout: Option<Duration>,
 }
 
@@ -137,10 +150,11 @@ impl GetPromptOptions {
         self
     }
 
-    fn request_options(&self) -> CallOptions<'static> {
+    fn request_options(&self, http: &HttpClient) -> CallOptions<'static> {
         CallOptions {
             max_retries: self.max_retries,
             timeout: self.fetch_timeout,
+            default_timeout: (!http.timeout_configured()).then_some(DEFAULT_FETCH_TIMEOUT),
             ..CallOptions::default()
         }
     }
@@ -300,7 +314,7 @@ impl PromptsClient {
             match self.cache.lookup(&key) {
                 Lookup::Fresh(prompt) => return Ok(prompt),
                 Lookup::Stale(prompt) => {
-                    self.spawn_refresh(key, ttl, options.request_options());
+                    self.spawn_refresh(key, ttl, options.request_options(&self.http));
                     return Ok(prompt);
                 }
                 Lookup::Miss => {}
@@ -312,7 +326,7 @@ impl PromptsClient {
             &self.cache,
             &key,
             ttl,
-            options.request_options(),
+            options.request_options(&self.http),
         )
         .await
         {

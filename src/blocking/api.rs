@@ -710,6 +710,7 @@ pub mod observations {
     use crate::pagination::{CursorPaginated, Pages, impl_cursor_query, paginate_cursor};
     use serde::{Serialize, Serializer};
     use std::sync::Arc;
+    use std::time::Duration;
 
     /// Blocking version of [`ObservationsClient`](crate::api::observations::ObservationsClient).
     #[derive(Clone)]

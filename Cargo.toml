@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-sdk"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2024"
 description = "Rust SDK for the Langfuse LLM observability API"
 license = "MIT"
@@ -15,7 +15,7 @@ categories = ["api-bindings", "development-tools"]
 members = ["macros"]
 
 [dependencies]
-langfuse-rust-sdk-macros = { version = "=0.9.0", path = "macros", optional = true }
+langfuse-rust-sdk-macros = { version = "=0.10.0", path = "macros", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
@@ -31,7 +31,7 @@ serde_urlencoded = "0.7"
 percent-encoding = "2"
 serde_norway = "0.9"
 sha2 = "0.11.1"
-futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 opentelemetry = { version = "0.33", default-features = false, features = ["trace"], optional = true }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"], optional = true }
 # `otel`: gzip compression of OTLP exports (reqwest's `gzip` feature only decodes responses).
@@ -41,6 +41,11 @@ tracing-opentelemetry = { version = "0.34", default-features = false, optional =
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"], optional = true }
 # `openai`: the async-openai API changes between 0.x versions, so the minor version is fixed.
 async-openai = { version = "0.43", default-features = false, features = ["rustls", "chat-completion", "embedding", "responses"], optional = true }
+# `bedrock`: traced Converse calls through the AWS SDK; the HTTP client and
+# runtime features are the application's choice.
+aws-sdk-bedrockruntime = { version = "1.153", default-features = false, optional = true }
+# `bedrock`: the `Document` type of tool inputs and model fields (not re-exported by the SDK).
+aws-smithy-types = { version = "1.9", default-features = false, optional = true }
 
 [package.metadata.docs.rs]
 # Document the `otel` and `unstable` modules too.
@@ -56,6 +61,8 @@ tracing-layer = ["otel", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
 macros = ["otel", "dep:langfuse-rust-sdk-macros"]
 # Traced OpenAI calls through async-openai (`openai::OpenAI`).
 openai = ["otel", "dep:async-openai"]
+# Traced Amazon Bedrock Converse calls through aws-sdk-bedrockruntime (`bedrock::Bedrock`).
+bedrock = ["otel", "dep:aws-sdk-bedrockruntime", "dep:aws-smithy-types"]
 # Blocking client on an internal Tokio runtime (`blocking::LangfuseClient`).
 blocking = ["tokio/rt-multi-thread"]
 
@@ -68,6 +75,10 @@ tracing-subscriber = "0.3"
 rig-core = { version = "0.46", features = ["reqwest"] }
 rig-agent = "0.46"
 trybuild = "1"
+aws-sdk-bedrockruntime = "1.153"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+# Encodes the event-stream frames of the fake Bedrock `converse-stream` endpoint.
+aws-smithy-eventstream = "0.61"
 
 [[example]]
 name = "dashboards"
@@ -104,3 +115,7 @@ required-features = ["openai"]
 [[example]]
 name = "blocking"
 required-features = ["blocking"]
+
+[[example]]
+name = "bedrock_tracing"
+required-features = ["bedrock"]

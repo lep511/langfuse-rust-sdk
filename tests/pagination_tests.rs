@@ -510,3 +510,81 @@ async fn every_cursor_based_method_paginates() {
     .await;
     assert_two_pages(c.evaluation_rules.list_pages(CursorParams::default())).await;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Page timeout of observations
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Client with a 200 ms timeout and no retries, against a server answering
+/// the observations list after 600 ms.
+async fn client_with_short_timeout_and_slow_observations()
+-> (langfuse_rust_sdk::LangfuseClient, MockServer) {
+    use langfuse_rust_sdk::{ClientConfig, LangfuseClient, RetryPolicy};
+    use std::time::Duration;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/public/v2/observations"))
+        .respond_with(
+            json(200, cursor_body(vec![observation_json("o1")], None))
+                .set_delay(Duration::from_millis(600)),
+        )
+        .mount(&server)
+        .await;
+    let config = ClientConfig::builder(PUBLIC_KEY, SECRET_KEY)
+        .base_url(server.uri())
+        .timeout(Duration::from_millis(200))
+        .retry_policy(RetryPolicy {
+            max_retries: 0,
+            ..RetryPolicy::default()
+        })
+        .build()
+        .unwrap();
+    (LangfuseClient::new(config).unwrap(), server)
+}
+
+fn timed_out(err: &LangfuseError) -> bool {
+    matches!(err, LangfuseError::Transport(e) if e.is_timeout())
+}
+
+#[tokio::test]
+async fn observation_pages_use_a_60_s_timeout() {
+    let (client, _server) = client_with_short_timeout_and_slow_observations().await;
+
+    // A single `list` keeps the client timeout...
+    let err = client
+        .observations
+        .list(&ListObservationsParams::default())
+        .await
+        .unwrap_err();
+    assert!(timed_out(&err), "{err:?}");
+
+    // ...while the page requests wait for the slow scan, as in the Python SDK.
+    let ids: Vec<String> = client
+        .observations
+        .list_pages(ListObservationsParams::default())
+        .items()
+        .map_ok(|o| o.id)
+        .try_collect()
+        .await
+        .unwrap();
+    assert_eq!(ids, ["o1"]);
+}
+
+#[tokio::test]
+async fn view_timeout_replaces_the_page_timeout() {
+    use langfuse_rust_sdk::RequestOptions;
+    use std::time::Duration;
+
+    let (client, _server) = client_with_short_timeout_and_slow_observations().await;
+    let view =
+        client.with_options(RequestOptions::default().with_timeout(Duration::from_millis(100)));
+    let err = view
+        .observations
+        .list_pages(ListObservationsParams::default())
+        .next()
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(timed_out(&err), "{err:?}");
+}

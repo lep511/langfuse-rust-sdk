@@ -312,6 +312,9 @@ impl ExportTask {
         if spans.is_empty() {
             return;
         }
+        for span in &mut spans {
+            integer_usage_counts(&mut span.attributes);
+        }
         if self.media_upload || self.mask.is_some() {
             for span in &mut spans {
                 span.attributes = dedupe_last_wins(std::mem::take(&mut span.attributes));
@@ -470,6 +473,28 @@ fn to_otel_scope(span: &SpanData) -> OtelInstrumentationScope {
         name: Some(scope.name().to_owned()),
         version: scope.version().map(str::to_owned),
         attributes: (!attributes.is_empty()).then_some(attributes),
+    }
+}
+
+/// Prefix of the OpenTelemetry GenAI token counts (`gen_ai.usage.input_tokens`, ...).
+const GEN_AI_USAGE_PREFIX: &str = "gen_ai.usage.";
+
+/// Turn `gen_ai.usage.*` counts recorded as strings back into integers.
+///
+/// `tracing` records unsigned integers through `Debug`, so the
+/// `tracing-opentelemetry` bridge turns the `u64` token counts of crates like
+/// rig into strings; the OpenTelemetry GenAI conventions (and Langfuse's
+/// mapping of them) expect integers.
+fn integer_usage_counts(attributes: &mut [KeyValue]) {
+    for kv in attributes {
+        if !kv.key.as_str().starts_with(GEN_AI_USAGE_PREFIX) {
+            continue;
+        }
+        if let OtelValue::String(text) = &kv.value
+            && let Ok(count) = text.as_str().trim().parse::<i64>()
+        {
+            kv.value = OtelValue::I64(count);
+        }
     }
 }
 

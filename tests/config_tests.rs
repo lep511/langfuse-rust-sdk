@@ -229,17 +229,20 @@ fn error_display_method_not_allowed() {
 #[test]
 fn error_display_rate_limited() {
     let err = LangfuseError::RateLimited {
+        message: "slow down".into(),
         retry_after: Some(Duration::from_secs(30)),
         body: None,
     };
     let display = err.to_string();
     assert!(display.contains("429"));
     assert!(display.contains("30"));
+    assert!(display.contains("slow down"));
 }
 
 #[test]
 fn error_display_rate_limited_no_retry_after() {
     let err = LangfuseError::RateLimited {
+        message: "Too Many Requests".into(),
         retry_after: None,
         body: None,
     };

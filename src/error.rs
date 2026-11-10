@@ -1,4 +1,11 @@
 //! Error types returned by every SDK method.
+//!
+//! An HTTP error keeps its status code ([`LangfuseError::status`]), a message
+//! ([`LangfuseError::message`]: the body's `message` or `error` field, the
+//! start of a body that is not JSON, or the status reason when the body is
+//! empty) and the parsed JSON body ([`LangfuseError::body`]). Response headers
+//! are available through a
+//! [`response_hook`](crate::RequestOptions::with_response_hook).
 
 use std::time::Duration;
 
@@ -75,10 +82,24 @@ pub enum LangfuseError {
     },
 
     /// HTTP 429 — too many requests; the retry policy may handle this automatically.
-    #[error("Rate limited (429): retry after {retry_after:?}")]
+    #[error("Rate limited (429): {message} (retry after {retry_after:?})")]
     RateLimited {
+        /// Human-readable error message from the server.
+        message: String,
         /// Server-suggested delay parsed from the `Retry-After` header.
         retry_after: Option<Duration>,
+        /// Raw JSON error body, if the server returned one.
+        body: Option<serde_json::Value>,
+    },
+
+    /// Other 4xx client errors (e.g. 402, 413, or 422 when a query exceeds a
+    /// resource limit).
+    #[error("Client error ({status}): {message}")]
+    ClientError {
+        /// The HTTP status code.
+        status: u16,
+        /// Human-readable error message from the server.
+        message: String,
         /// Raw JSON error body, if the server returned one.
         body: Option<serde_json::Value>,
     },
@@ -92,7 +113,7 @@ pub enum LangfuseError {
         body: Option<serde_json::Value>,
     },
 
-    /// Other 5xx server errors.
+    /// Other 5xx server errors (and any other non-success status).
     #[error("Server error ({status}): {message}")]
     ServerError {
         /// The HTTP status code.
@@ -136,6 +157,7 @@ impl LangfuseError {
             | LangfuseError::Conflict { body, .. }
             | LangfuseError::PreconditionFailed { body, .. }
             | LangfuseError::RateLimited { body, .. }
+            | LangfuseError::ClientError { body, .. }
             | LangfuseError::ServiceUnavailable { body, .. }
             | LangfuseError::ServerError { body, .. } => body.as_ref(),
             LangfuseError::Transport(_)
@@ -145,7 +167,55 @@ impl LangfuseError {
             | LangfuseError::Media(_) => None,
         }
     }
+
+    /// The HTTP status code of an error response (also of a transport error
+    /// that carries one).
+    pub fn status(&self) -> Option<u16> {
+        match self {
+            LangfuseError::BadRequest { .. } => Some(400),
+            LangfuseError::Unauthorized { .. } => Some(401),
+            LangfuseError::AccessDenied { .. } => Some(403),
+            LangfuseError::NotFound { .. } => Some(404),
+            LangfuseError::MethodNotAllowed { .. } => Some(405),
+            LangfuseError::Conflict { .. } => Some(409),
+            LangfuseError::PreconditionFailed { .. } => Some(412),
+            LangfuseError::RateLimited { .. } => Some(429),
+            LangfuseError::ServiceUnavailable { .. } => Some(503),
+            LangfuseError::ClientError { status, .. }
+            | LangfuseError::ServerError { status, .. } => Some(*status),
+            LangfuseError::Transport(err) => err.status().map(|s| s.as_u16()),
+            LangfuseError::Serialization(_)
+            | LangfuseError::Config(_)
+            | LangfuseError::UrlParse(_)
+            | LangfuseError::Media(_) => None,
+        }
+    }
+
+    /// The server's message of an error response.
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            LangfuseError::BadRequest { message, .. }
+            | LangfuseError::Unauthorized { message, .. }
+            | LangfuseError::AccessDenied { message, .. }
+            | LangfuseError::NotFound { message, .. }
+            | LangfuseError::MethodNotAllowed { message, .. }
+            | LangfuseError::Conflict { message, .. }
+            | LangfuseError::PreconditionFailed { message, .. }
+            | LangfuseError::RateLimited { message, .. }
+            | LangfuseError::ClientError { message, .. }
+            | LangfuseError::ServiceUnavailable { message, .. }
+            | LangfuseError::ServerError { message, .. } => Some(message),
+            LangfuseError::Transport(_)
+            | LangfuseError::Serialization(_)
+            | LangfuseError::Config(_)
+            | LangfuseError::UrlParse(_)
+            | LangfuseError::Media(_) => None,
+        }
+    }
 }
+
+/// Longest part of a non-JSON error body kept in the message.
+const MAX_TEXT_MESSAGE_CHARS: usize = 500;
 
 pub(crate) fn map_response_error(
     status: StatusCode,
@@ -153,11 +223,7 @@ pub(crate) fn map_response_error(
     headers: &reqwest::header::HeaderMap,
 ) -> LangfuseError {
     let body: Option<serde_json::Value> = serde_json::from_slice(body_bytes).ok();
-    let message = body
-        .as_ref()
-        .and_then(|b| b.get("message").and_then(|m| m.as_str()))
-        .unwrap_or("Unknown error")
-        .to_string();
+    let message = error_message(status, body.as_ref(), body_bytes);
 
     match status.as_u16() {
         400 => LangfuseError::BadRequest { message, body },
@@ -169,8 +235,17 @@ pub(crate) fn map_response_error(
         412 => LangfuseError::PreconditionFailed { message, body },
         429 => {
             let retry_after = parse_retry_after(headers);
-            LangfuseError::RateLimited { retry_after, body }
+            LangfuseError::RateLimited {
+                message,
+                retry_after,
+                body,
+            }
         }
+        status @ 400..=499 => LangfuseError::ClientError {
+            status,
+            message,
+            body,
+        },
         503 => LangfuseError::ServiceUnavailable { message, body },
         status @ 500..=599 => LangfuseError::ServerError {
             status,
@@ -182,6 +257,43 @@ pub(crate) fn map_response_error(
             message,
             body,
         },
+    }
+}
+
+/// The message of an error response: the `message` field of a JSON body, its
+/// `error` field (a string, or an object with a `message`), the compact JSON
+/// of another body, the (trimmed, shortened) text of a body that is not JSON,
+/// or the status reason of an empty body.
+fn error_message(status: StatusCode, body: Option<&serde_json::Value>, raw: &[u8]) -> String {
+    if let Some(body) = body {
+        let field = |value: &serde_json::Value, key: &str| {
+            value
+                .get(key)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
+        let message = field(body, "message")
+            .or_else(|| field(body, "error"))
+            .or_else(|| body.get("error").and_then(|e| field(e, "message")))
+            .or_else(|| body.as_str().filter(|s| !s.is_empty()).map(str::to_owned));
+        return message.unwrap_or_else(|| shorten(&body.to_string()));
+    }
+    let text = String::from_utf8_lossy(raw);
+    let text = text.trim();
+    if text.is_empty() {
+        return status
+            .canonical_reason()
+            .unwrap_or("Unknown error")
+            .to_owned();
+    }
+    shorten(text)
+}
+
+fn shorten(text: &str) -> String {
+    match text.char_indices().nth(MAX_TEXT_MESSAGE_CHARS) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
     }
 }
 

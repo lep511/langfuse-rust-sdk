@@ -558,6 +558,95 @@ async fn fetch_timeout_per_call() {
     );
 }
 
+/// `GET` of the prompt answered after `delay`.
+async fn mount_slow_prompt(server: &MockServer, delay: Duration) {
+    Mock::given(method("GET"))
+        .and(path(PROMPT_PATH))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(text_prompt_json(1))
+                .set_delay(delay),
+        )
+        .mount(server)
+        .await;
+}
+
+fn timed_out(err: &LangfuseError) -> bool {
+    matches!(err, LangfuseError::Transport(e) if e.is_timeout())
+}
+
+#[tokio::test]
+async fn default_fetch_timeout_is_five_seconds() {
+    // No timeout configured: the general 30 s default does not apply, so a
+    // cold start falls back after 5 s per attempt, as in the Python SDK.
+    let (client, server) = test_client().await;
+    mount_slow_prompt(&server, Duration::from_millis(6_500)).await;
+
+    let started = std::time::Instant::now();
+    let prompt = client
+        .prompts
+        .get_cached(
+            "greeting",
+            &with_fallback(GetPromptOptions::default(), "offline"),
+        )
+        .await
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert!(prompt.is_fallback());
+    assert!(
+        elapsed >= Duration::from_millis(4_900) && elapsed < Duration::from_secs(6),
+        "{elapsed:?}"
+    );
+}
+
+#[tokio::test]
+async fn configured_client_timeout_is_the_fetch_timeout() {
+    // The 5 s default would wait for this response; the client's own 200 ms does not.
+    let server = MockServer::start().await;
+    mount_slow_prompt(&server, Duration::from_secs(1)).await;
+    let config = ClientConfig::builder(PUBLIC_KEY, SECRET_KEY)
+        .base_url(server.uri())
+        .timeout(Duration::from_millis(200))
+        .retry_policy(RetryPolicy {
+            max_retries: 0,
+            ..RetryPolicy::default()
+        })
+        .build()
+        .unwrap();
+    let client = LangfuseClient::new(config).unwrap();
+
+    let err = client
+        .prompts
+        .get_cached("greeting", &GetPromptOptions::default())
+        .await
+        .unwrap_err();
+    assert!(timed_out(&err), "{err:?}");
+}
+
+#[tokio::test]
+async fn view_timeout_is_the_fetch_timeout() {
+    let (client, server) = test_client().await;
+    mount_slow_prompt(&server, Duration::from_secs(1)).await;
+    let view = client.with_options(
+        langfuse_rust_sdk::RequestOptions::default().with_timeout(Duration::from_millis(200)),
+    );
+
+    let err = view
+        .prompts
+        .get_cached("greeting", &GetPromptOptions::default())
+        .await
+        .unwrap_err();
+    assert!(timed_out(&err), "{err:?}");
+    // Without the view, the 5 s default waits for the answer.
+    assert!(
+        client
+            .prompts
+            .get_cached("greeting", &GetPromptOptions::default())
+            .await
+            .is_ok()
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Invalidation
 // ═══════════════════════════════════════════════════════════════════════
