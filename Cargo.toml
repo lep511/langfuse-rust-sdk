@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-sdk"
-version = "0.10.2"
+version = "0.10.3"
 edition = "2024"
 description = "Rust SDK for the Langfuse LLM observability API"
 license = "MIT"
@@ -20,7 +20,7 @@ exclude = [".cargo/"]
 members = ["macros", "integration-tests"]
 
 [dependencies]
-langfuse-rust-sdk-macros = { version = "=0.10.2", path = "macros", optional = true }
+langfuse-rust-sdk-macros = { version = "=0.10.3", path = "macros", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }

@@ -1,7 +1,7 @@
 # Build footprint: keeping `target/` small
 
 `target/` of this repository used to grow to 57–120 GB. This page records why,
-what changed (2026-11-10, branch `build/target-footprint`), the measurements,
+what changed (release 0.10.3, 2026-11-10), the measurements,
 and how to keep it small day to day.
 
 Measured on rustc/cargo 1.99.0, aarch64-unknown-linux-gnu (Amazon Linux 2023,

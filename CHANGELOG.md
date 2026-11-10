@@ -4,10 +4,17 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
-## [Unreleased]
+## [0.10.3] - 2026-11-10
 
-Development only: nothing in the published crate changes (Cargo ignores the
-profiles of dependencies).
+A development-only release: the library code and its API are unchanged. It
+makes the repository's builds much smaller and faster: a fresh
+`cargo test --no-run --all-features` goes from 22.7 GiB and 194 s to 3.0 GiB
+and 46 s, `cargo test --no-run` from 9.4 GiB and 76 s to 2.0 GiB and 23 s, and
+a typical day of work in one `target/` (tests with and without all features,
+two edit-rebuilds, clippy, docs) from 34.4 GiB to 8.2 GiB. Cargo ignores the
+profiles of dependencies, so projects using the crate are not affected. The
+package no longer contains the moved tests and examples, and adds
+`docs/build-footprint.md`. The details are in that document.
 
 ### Changed
 
@@ -34,6 +41,12 @@ profiles of dependencies).
   workflow (feature sets, debugging, rust-analyzer settings, optional
   rust-lld linking) and the cleanup routine; `.cargo/config.toml` adds the
   `cargo clean-own` alias.
+
+### Fixed
+
+- `cargo doc` without the `otel` feature no longer warns about an unresolved
+  link to `Observation::set_provider_usage` in the `usage` module docs (an
+  error with `RUSTDOCFLAGS="-D warnings"`, as in the publishing checklist).
 
 ## [0.10.2] - 2026-11-10
 

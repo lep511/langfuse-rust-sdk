@@ -7,7 +7,13 @@
 //! LangChain integration does (`_parse_usage_model`), so a generation traced
 //! by hand from Anthropic, Amazon Bedrock, Google Vertex AI / Gemini, IBM or
 //! LangChain-style usage gets the same usage details and costs as in Python.
-//! [`Observation::set_provider_usage`](crate::otel::Observation::set_provider_usage)
+// The link target only exists with `otel`; without it, plain code keeps
+// `cargo doc` (default features) free of unresolved-link warnings.
+#![cfg_attr(
+    feature = "otel",
+    doc = "[`Observation::set_provider_usage`](crate::otel::Observation::set_provider_usage)"
+)]
+#![cfg_attr(not(feature = "otel"), doc = "`Observation::set_provider_usage`")]
 //! (feature `otel`) applies it.
 //!
 //! ```
