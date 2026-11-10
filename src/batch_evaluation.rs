@@ -8,6 +8,9 @@
 //! score per evaluation on the observation. Nothing is traced. A run that
 //! stops early returns a [`BatchEvaluationResumeToken`] to continue it.
 //!
+//! Bound the time window in the filter with a `datetime` condition on
+//! `startTime`, as below; see [`filter`](BatchEvaluationOptions::filter).
+//!
 //! ```rust,no_run
 //! use langfuse_rust_sdk::batch_evaluation::BatchEvaluationOptions;
 //! use langfuse_rust_sdk::experiment::{Evaluation, EvaluatorInput, evaluator};
@@ -23,9 +26,15 @@
 //! let not_empty = evaluator("not_empty", |args: EvaluatorInput| async move {
 //!     Evaluation::boolean("not_empty", !args.output.is_null())
 //! });
+//! // Generations that started on or after 2026-11-01: without a lower
+//! // `startTime` bound the API searches from 2020-01-01.
+//! let filter = r#"[
+//!     {"type": "string", "column": "type", "operator": "=", "value": "GENERATION"},
+//!     {"type": "datetime", "column": "startTime", "operator": ">=", "value": "2026-11-01T00:00:00Z"}
+//! ]"#;
 //! let options = BatchEvaluationOptions::new(mapper)
 //!     .with_evaluator(not_empty)
-//!     .with_filter(r#"[{"type": "string", "column": "type", "operator": "=", "value": "GENERATION"}]"#)
+//!     .with_filter(filter)
 //!     .with_max_items(100);
 //! let result = client.run_batched_evaluation(options).await?;
 //! println!("{result}");
@@ -117,6 +126,12 @@ pub struct BatchEvaluationOptions {
     /// Filter of the observations: a JSON array of conditions of the v2
     /// observations API, e.g.
     /// `[{"type": "string", "column": "name", "operator": "=", "value": "chat"}]`.
+    ///
+    /// Bound the time window here with `datetime` conditions on `startTime`
+    /// (`>=` for the start, `<` for the end; ISO 8601 values such as
+    /// `"2026-11-01T00:00:00Z"`), as Langfuse v4 recommends for every
+    /// observations query: the run sends no `fromStartTime` or `toStartTime`,
+    /// and without a lower bound the API searches from 2020-01-01.
     pub filter: Option<String>,
     /// Observations requested per page (default: 50, at most 1000).
     pub fetch_batch_size: usize,

@@ -4,13 +4,14 @@
 //! comments, so remove it in the Langfuse UI if needed.
 //!
 //! The trace comes from `LANGFUSE_TRACE_ID`, or else from the most recent
-//! observation in the project.
+//! observation of the last 24 hours.
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 //!   cargo run --example comments
 //! ```
 
+use chrono::{Duration, SecondsFormat, Utc};
 use langfuse_rust_sdk::api::comments::ListCommentsParams;
 use langfuse_rust_sdk::api::observations::ListObservationsParams;
 use langfuse_rust_sdk::models::comments::CreateCommentRequest;
@@ -20,17 +21,21 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
-/// `LANGFUSE_TRACE_ID`, or the trace of the most recent observation.
+/// `LANGFUSE_TRACE_ID`, or the trace of the most recent observation of the
+/// last 24 hours.
 async fn find_trace_id(
     client: &LangfuseClient,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     if let Ok(id) = std::env::var("LANGFUSE_TRACE_ID") {
         return Ok(Some(id));
     }
+    // Without `fromStartTime` the v2 API searches from 2020-01-01.
+    let since = (Utc::now() - Duration::hours(24)).to_rfc3339_opts(SecondsFormat::Secs, true);
     let page = client
         .observations
         .list(&ListObservationsParams {
             limit: Some(20),
+            from_start_time: Some(since),
             ..Default::default()
         })
         .await?;
@@ -47,7 +52,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let project = projects.data.first().ok_or("no project for this API key")?;
 
     let Some(trace_id) = find_trace_id(&client).await? else {
-        println!("No traces yet. Ingest one first, e.g. `cargo run --example otel_ingestion`.");
+        println!(
+            "No traces in the last 24 hours. Set LANGFUSE_TRACE_ID or ingest one first, e.g. `cargo run --example otel_ingestion`."
+        );
         return Ok(());
     };
     println!("Project {} / trace {trace_id}", project.name);

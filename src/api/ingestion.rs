@@ -1,4 +1,6 @@
-//! Batch ingestion of traces, spans, generations, scores and events.
+//! Trace ingestion over OTLP/HTTP (`POST /api/public/otel/v1/traces`), the only
+//! trace ingestion path of Langfuse v4 (the legacy batch ingestion API is not
+//! implemented). Scores are created with `POST /api/public/scores`.
 
 use std::sync::Arc;
 
@@ -23,8 +25,10 @@ impl IngestionClient {
     /// `POST /api/public/otel/v1/traces` (OTLP/HTTP JSON).
     ///
     /// Sends `x-langfuse-ingestion-version: 4`, as the API requires. Retried
-    /// like an idempotent request (also on 5xx and timeouts): spans carry their
-    /// IDs, so a repeated export does not duplicate them.
+    /// like an idempotent request (also on 5xx and timeouts), so a transient
+    /// failure does not lose the spans. Langfuse v4 does not deduplicate span
+    /// IDs, though: retrying a request the server had already stored (for
+    /// example after a timeout) duplicates its observations.
     pub async fn ingest_traces(&self, req: &IngestTracesRequest) -> Result<(), LangfuseError> {
         self.post_traces(req, OTEL_TRACES_PATH, CallOptions::default())
             .await

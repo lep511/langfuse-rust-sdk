@@ -4,7 +4,8 @@
 //! three generations (through the OTLP endpoint, no `otel` feature needed),
 //! waits until they can be queried, evaluates them (one evaluator fails on
 //! purpose for the empty answer), prints the summary, and deletes the scores
-//! and the trace. Point the filter at your own observations to evaluate them.
+//! and the trace. Point the filter (and its `startTime` window) at your own
+//! observations to evaluate them.
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -13,6 +14,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use chrono::{SecondsFormat, Utc};
 use langfuse_rust_sdk::api::observations::ListObservationsParams;
 use langfuse_rust_sdk::api::scores::ListScoresParams;
 use langfuse_rust_sdk::batch_evaluation::BatchEvaluationOptions;
@@ -39,10 +41,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = LangfuseClient::new(ClientConfig::from_env()?)?;
 
+    // The observations of this run start after `since`, which bounds every
+    // v2 observations query below (without a lower bound the API searches
+    // from 2020-01-01).
+    let since =
+        (Utc::now() - chrono::Duration::minutes(5)).to_rfc3339_opts(SecondsFormat::Secs, true);
     let trace_id = create_trace_id(None);
     ingest_generations(&client, &trace_id).await?;
     println!("Ingested trace {trace_id}; waiting until its observations can be queried...");
-    wait_for_observations(&client, &trace_id, ANSWERS.len()).await?;
+    wait_for_observations(&client, &trace_id, &since, ANSWERS.len()).await?;
 
     // The mapper picks what the evaluators see; `io` fields hold the raw strings.
     let mapper = |observation: ObservationV2| async move {
@@ -76,8 +83,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Evaluation::boolean("quality", passed)
     });
 
-    let filter =
-        json!([{"type": "string", "column": "traceId", "operator": "=", "value": trace_id}]);
+    // The run sends no `fromStartTime`: its time window is a `startTime`
+    // condition in the filter.
+    let filter = json!([
+        {"type": "string", "column": "traceId", "operator": "=", "value": trace_id},
+        {"type": "datetime", "column": "startTime", "operator": ">=", "value": since},
+    ]);
     let options = BatchEvaluationOptions::new(mapper)
         .with_evaluator(not_empty)
         .with_evaluator(conciseness)
@@ -168,10 +179,12 @@ async fn ingest_generations(
     Ok(())
 }
 
-/// Poll the v2 observations API until the trace has `count` observations.
+/// Poll the v2 observations API until the trace has `count` observations
+/// that started at or after `since`.
 async fn wait_for_observations(
     client: &LangfuseClient,
     trace_id: &str,
+    since: &str,
     count: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..30 {
@@ -179,6 +192,7 @@ async fn wait_for_observations(
             .observations
             .list(&ListObservationsParams {
                 trace_id: Some(trace_id.to_owned()),
+                from_start_time: Some(since.to_owned()),
                 ..Default::default()
             })
             .await?;

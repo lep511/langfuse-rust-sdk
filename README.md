@@ -152,7 +152,7 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`prompts`](examples/prompts.rs) | Create text and chat prompts (with a placeholder), fetch by label, and list all |
 | [`manage_models`](examples/manage_models.rs) | Register custom models with pricing, list, and delete |
 | [`skills`](examples/skills.rs) | Create a skill version with files, fetch with content, list all |
-| [`observations`](examples/observations.rs) | List recent observations with a formatted table output |
+| [`observations`](examples/observations.rs) | List the observations of the last 24 hours with a formatted table output |
 | [`otel_ingestion`](examples/otel_ingestion.rs) | Ingest an OpenTelemetry span with tags and print its URL in the UI (writes one trace) |
 | [`otel_tracing`](examples/otel_tracing.rs) | Trace a request with nested observations, user/session attributes and a score (`--features otel`, writes one trace) |
 | [`otel_export_options`](examples/otel_export_options.rs) | Gzip export, a provider shared with another exporter and `mask_otel_spans` redaction, checked through the API (`--features otel`, writes one trace and deletes it) |
@@ -564,7 +564,9 @@ evaluations of each item. Failing tasks and evaluators are recorded and skipped.
 `client.run_batched_evaluation(options)` scores observations already in Langfuse with the same
 evaluators: it pages through `GET /api/public/v2/observations` (with a JSON `filter`), maps each
 observation to `EvaluatorInput` and queues one score per evaluation. A run stopped by `max_items`
-or a failed request returns a `BatchEvaluationResumeToken` to continue it:
+or a failed request returns a `BatchEvaluationResumeToken` to continue it. The run sends no
+`fromStartTime`, so bound the time window in the filter with a `datetime` condition on
+`startTime` (without a lower bound the API searches from 2020-01-01):
 
 ```rust
 use langfuse_rust_sdk::batch_evaluation::BatchEvaluationOptions;
@@ -574,7 +576,10 @@ let mapper = |o: ObservationV2| async move {
 };
 let options = BatchEvaluationOptions::new(mapper)
     .with_evaluator(not_empty)
-    .with_filter(r#"[{"type": "string", "column": "name", "operator": "=", "value": "chat"}]"#)
+    .with_filter(r#"[
+        {"type": "string", "column": "name", "operator": "=", "value": "chat"},
+        {"type": "datetime", "column": "startTime", "operator": ">=", "value": "2026-11-01T00:00:00Z"}
+    ]"#)
     .with_max_items(500);
 let result = client.run_batched_evaluation(options).await?;
 println!("{result}");
@@ -608,7 +613,9 @@ Every list method returning `Paginated<T>` or `CursorPaginated<T>` has a `*_page
 that returns a lazy stream of pages. `.items()` flattens it into a stream of items, and
 `.take(n)` caps the number of items without requesting further pages. Each page request of
 `observations.list_pages` has a 60 s timeout, as in the Python SDK (the server can scan for up
-to 45 s); the timeout of a `with_options` view replaces it:
+to 45 s); the timeout of a `with_options` view replaces it. Langfuse v4 recommends bounding every
+observations query in time (without a lower bound the API searches from 2020-01-01), so the
+example sets `from_start_time`:
 
 ```rust
 use futures::TryStreamExt;
@@ -616,6 +623,7 @@ use langfuse_rust_sdk::api::observations::ListObservationsParams;
 
 let params = ListObservationsParams {
     trace_id: Some("abc123".into()),
+    from_start_time: Some("2026-11-01T00:00:00Z".into()),   // ISO 8601, inclusive
     ..Default::default()
 };
 let mut observations = client.observations.list_pages(params).items();

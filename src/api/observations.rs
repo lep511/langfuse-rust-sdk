@@ -36,12 +36,23 @@ pub struct ListObservationsParams {
     pub parent_observation_id: Option<String>,
     /// Matches any of the given environments.
     pub environment: Option<Vec<String>>,
+    /// Start of the time window (inclusive): observations that started at or
+    /// after this ISO 8601 datetime, e.g. `2026-11-01T00:00:00Z`. Langfuse v4
+    /// recommends bounding every query: without it the API searches from
+    /// 2020-01-01. A `startTime` condition in [`filter`](Self::filter) takes
+    /// precedence over this parameter.
     pub from_start_time: Option<String>,
+    /// End of the time window (exclusive): observations that started before
+    /// this ISO 8601 datetime. A `startTime` condition in
+    /// [`filter`](Self::filter) takes precedence over this parameter.
     pub to_start_time: Option<String>,
     pub version: Option<String>,
     /// Comma-separated field groups to include (e.g. `core,basic,usage`).
     pub fields: Option<String>,
     pub expand_metadata: Option<String>,
+    /// Deprecated by the API: Langfuse v4 rejects `Some(true)` with 400 and
+    /// always returns `input`/`output` as raw strings (parse them with
+    /// `serde_json::from_str` when they hold JSON). Leave it `None`.
     pub parse_io_as_json: Option<bool>,
     pub is_root_observation: Option<bool>,
     /// JSON-encoded array of filter conditions.

@@ -22,8 +22,11 @@ const DEFAULT_JITTER_FRACTION: f64 = 0.2;
 /// | Connection failure (request never sent) | retried | retried |
 /// | Timeout or connection dropped mid-request | retried | not retried |
 ///
-/// OTLP trace ingestion counts as idempotent (spans carry their IDs). Status
-/// 409 (Conflict) is never retried: it signals a real conflict that a retry
+/// OTLP trace ingestion is retried like an idempotent request, so that a
+/// transient failure does not lose spans, even though Langfuse v4 does not
+/// deduplicate span IDs: retrying a request the server had already stored
+/// (for example after a timeout) duplicates its observations. Status 409
+/// (Conflict) is never retried: it signals a real conflict that a retry
 /// cannot fix.
 ///
 /// The default policy retries up to 2 times with 1 s initial backoff, 60 s

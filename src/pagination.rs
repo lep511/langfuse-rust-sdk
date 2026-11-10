@@ -18,6 +18,8 @@
 //! # async fn example(client: &LangfuseClient) -> Result<(), langfuse_rust_sdk::LangfuseError> {
 //! let params = ListObservationsParams {
 //!     trace_id: Some("abc123".into()),
+//!     // Bound the time window: without it the API searches from 2020-01-01.
+//!     from_start_time: Some("2026-11-01T00:00:00Z".into()),
 //!     limit: Some(100),
 //!     ..Default::default()
 //! };

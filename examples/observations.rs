@@ -1,10 +1,11 @@
-//! List observations with filters and display details.
+//! List the observations of the last 24 hours and display details.
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 //!   cargo run --example observations
 //! ```
 
+use chrono::{Duration, SecondsFormat, Utc};
 use langfuse_rust_sdk::api::observations::ListObservationsParams;
 use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 
@@ -17,16 +18,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    // Fetch the most recent observations
+    // Fetch the most recent observations of the last 24 hours. Bound every
+    // v2 observations query: without `fromStartTime` the API searches from
+    // 2020-01-01.
+    let since = (Utc::now() - Duration::hours(24)).to_rfc3339_opts(SecondsFormat::Secs, true);
     let page = client
         .observations
         .list(&ListObservationsParams {
             limit: Some(10),
+            from_start_time: Some(since),
             ..Default::default()
         })
         .await?;
 
-    println!("Recent observations ({} returned):", page.data.len());
+    println!(
+        "Recent observations of the last 24 hours ({} returned):",
+        page.data.len()
+    );
     println!(
         "{:<12} {:<14} {:<25} {:<20} {:>8}",
         "TYPE", "LEVEL", "NAME", "MODEL", "LATENCY"

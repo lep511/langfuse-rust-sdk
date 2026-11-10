@@ -4,6 +4,44 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.10.2] - 2026-11-10
+
+A review against Langfuse v4 (Langfuse Cloud becomes v4-only on 2026-11-16):
+the SDK uses only v4 APIs; this release fixes an example, bounds observation
+queries in time and corrects documentation. The full check is in
+`docs/langfuse-v4-compliance.md`.
+
+### Changed
+
+- The examples that list observations (`observations`, `comments`,
+  `annotation_queues`, `batch_evaluation`, `media`, `otel_export_options`)
+  bound the v2 query with `from_start_time`, as the Langfuse v4 migration
+  guide recommends (without a lower bound the API searches from
+  2020-01-01): the last 24 hours, or from 5 minutes before the trace the
+  example creates. The `batch_evaluation` example also bounds `startTime` in
+  its filter.
+- The docs of `ListObservationsParams::from_start_time` and `to_start_time`
+  and of `BatchEvaluationOptions::filter` explain how to bound the time
+  window; for batch evaluation, which sends no `fromStartTime`, it is a
+  `datetime` condition on `startTime` in the filter. The README and the
+  `pagination` docs show it.
+
+### Fixed
+
+- The `media` example no longer sends `parseIoAsJson=true`, which Langfuse v4
+  rejects with 400, and parses the observation input, which v4 always returns
+  as a string.
+- `ListObservationsParams::parse_io_as_json` documents that Langfuse v4
+  rejects `Some(true)` and returns input and output as raw strings.
+- The `ingestion` module docs describe OTLP trace ingestion, the only trace
+  ingestion path of Langfuse v4. `docs/langfuse-v4-compliance.md` records
+  the check that the SDK uses only Langfuse v4 APIs.
+- The docs of `IngestionClient::ingest_traces` and `RetryPolicy` no longer
+  claim that span IDs make a repeated OTLP export harmless: Langfuse v4 does
+  not deduplicate span IDs, so retrying a request the server had already
+  stored (for example after a timeout) duplicates its observations. Retries
+  are unchanged.
+
 ## [0.10.1] - 2026-11-10
 
 ### Fixed

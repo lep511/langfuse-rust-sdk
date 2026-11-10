@@ -11,6 +11,7 @@
 
 use std::time::Duration;
 
+use chrono::{SecondsFormat, Utc};
 use langfuse_rust_sdk::api::observations::ListObservationsParams;
 use langfuse_rust_sdk::media::LangfuseMedia;
 use langfuse_rust_sdk::models::media::MediaContentType;
@@ -33,6 +34,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report =
         LangfuseMedia::from_bytes(b"Pixel color: red".to_vec(), MediaContentType::TextPlain);
 
+    // The observations of this run start after `since`; it bounds the query
+    // below (without `fromStartTime` the v2 API searches from 2020-01-01).
+    let since =
+        (Utc::now() - chrono::Duration::minutes(5)).to_rfc3339_opts(SecondsFormat::Secs, true);
     let generation = tracer.start_observation("describe-image", ObservationType::Generation);
     generation
         .set_model("gpt-4o-mini")
@@ -56,11 +61,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("URL: {}", client.trace_url(&trace_id).await?);
 
-    // Read the input back: the image is stored as a reference string.
+    // Read the input back: the image is stored as a reference string. Langfuse
+    // v4 returns input and output as raw strings (`parseIoAsJson=true` is
+    // rejected with 400), so the JSON input is parsed here.
     let params = ListObservationsParams {
         trace_id: Some(trace_id.clone()),
+        from_start_time: Some(since),
         fields: Some("core,io".into()),
-        parse_io_as_json: Some(true),
         ..Default::default()
     };
     for _ in 0..20 {
@@ -73,7 +80,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_iter()
             .next()
         {
-            let input = observation.input.unwrap_or_default();
+            let input = match observation.input {
+                Some(serde_json::Value::String(raw)) => {
+                    serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw))
+                }
+                other => other.unwrap_or_default(),
+            };
             println!("Stored input: {input}");
             let resolved = client.media.resolve_references(&input).await;
             let url = &resolved[0]["content"][1]["image_url"]["url"];

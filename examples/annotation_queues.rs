@@ -7,14 +7,15 @@
 //! The queue item is deleted at the end.
 //!
 //! The trace comes from `LANGFUSE_TRACE_ID`, or else from the most recent
-//! observation. Set `LANGFUSE_EXAMPLE_USER_ID` to also assign and unassign a
-//! reviewer.
+//! observation of the last 24 hours. Set `LANGFUSE_EXAMPLE_USER_ID` to also
+//! assign and unassign a reviewer.
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 //!   cargo run --example annotation_queues
 //! ```
 
+use chrono::{Duration, SecondsFormat, Utc};
 use langfuse_rust_sdk::api::annotation_queues::ListQueueItemsParams;
 use langfuse_rust_sdk::api::observations::ListObservationsParams;
 use langfuse_rust_sdk::models::annotation_queues::{
@@ -101,12 +102,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
+    // The most recent observation of the last 24 hours: without
+    // `fromStartTime` the v2 API searches from 2020-01-01.
+    let since = (Utc::now() - Duration::hours(24)).to_rfc3339_opts(SecondsFormat::Secs, true);
     let trace_id = match std::env::var("LANGFUSE_TRACE_ID") {
         Ok(id) => Some(id),
         Err(_) => client
             .observations
             .list(&ListObservationsParams {
                 limit: Some(20),
+                from_start_time: Some(since),
                 ..Default::default()
             })
             .await?
@@ -115,7 +120,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .find_map(|obs| obs.trace_id),
     };
     let Some(trace_id) = trace_id else {
-        println!("No traces yet. Ingest one first, e.g. `cargo run --example otel_ingestion`.");
+        println!(
+            "No traces in the last 24 hours. Set LANGFUSE_TRACE_ID or ingest one first, e.g. `cargo run --example otel_ingestion`."
+        );
         return Ok(());
     };
 

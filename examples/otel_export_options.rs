@@ -15,6 +15,7 @@
 
 use std::time::Duration;
 
+use chrono::{SecondsFormat, Utc};
 use langfuse_rust_sdk::api::observations::ListObservationsParams;
 use langfuse_rust_sdk::models::observations::ObservationV2;
 use langfuse_rust_sdk::otel::opentelemetry::KeyValue;
@@ -83,6 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracer = LangfuseTracer::with_provider(&processor, provider.clone())?;
 
     println!("Tracing (spans go to Langfuse and to the other backend):");
+    // The observations of this run start after `since`; it bounds the query
+    // that waits for them (without `fromStartTime` the v2 API searches from
+    // 2020-01-01).
+    let since =
+        (Utc::now() - chrono::Duration::minutes(5)).to_rfc3339_opts(SecondsFormat::Secs, true);
     let request = tracer.start_observation("export-options-demo", ObservationType::Agent);
     request.set_input(&json!({"question": "Which plan am I on?"}));
     let trace_id = request.trace_id().to_owned();
@@ -111,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = provider.shutdown();
 
     println!("Waiting for Langfuse to store trace {trace_id}...");
-    let observations = wait_for_observations(&client, &trace_id, 3).await?;
+    let observations = wait_for_observations(&client, &trace_id, &since, 3).await?;
     let mut ok = observations.len() == 3;
     for observation in &observations {
         let name = observation.name.as_deref().unwrap_or("?");
@@ -148,14 +154,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Poll the observations of `trace_id` for up to a minute until `count` are stored.
+/// Poll the observations of `trace_id` (started at or after `since`) for up to
+/// a minute until `count` are stored.
 async fn wait_for_observations(
     client: &LangfuseClient,
     trace_id: &str,
+    since: &str,
     count: usize,
 ) -> Result<Vec<ObservationV2>, LangfuseError> {
     let params = ListObservationsParams {
         trace_id: Some(trace_id.to_owned()),
+        from_start_time: Some(since.to_owned()),
         fields: Some("core,basic,metadata".into()),
         ..Default::default()
     };
