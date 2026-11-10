@@ -385,6 +385,11 @@ impl Observation {
         &self.inner.id
     }
 
+    /// The effective environment: propagated, else the tracer default.
+    pub(crate) fn environment(&self) -> Option<&str> {
+        self.inner.environment.as_deref()
+    }
+
     /// The observation type.
     pub fn kind(&self) -> ObservationType {
         self.inner.kind

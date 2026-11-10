@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-sdk"
-version = "0.10.3"
+version = "0.11.0"
 edition = "2024"
 description = "Rust SDK for the Langfuse LLM observability API"
 license = "MIT"
@@ -20,7 +20,7 @@ exclude = [".cargo/"]
 members = ["macros", "integration-tests"]
 
 [dependencies]
-langfuse-rust-sdk-macros = { version = "=0.10.3", path = "macros", optional = true }
+langfuse-rust-sdk-macros = { version = "=0.11.0", path = "macros", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
@@ -46,6 +46,9 @@ tracing-opentelemetry = { version = "0.34", default-features = false, optional =
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"], optional = true }
 # `openai`: the async-openai API changes between 0.x versions, so the minor version is fixed.
 async-openai = { version = "0.43", default-features = false, features = ["rustls", "chat-completion", "embedding", "responses"], optional = true }
+# `openai`: the key type of `async_openai::config::Config::api_key`, for
+# `gateway::GatewayOpenAIConfig` (the version async-openai 0.43 uses).
+secrecy = { version = "0.10", default-features = false, optional = true }
 # `bedrock`: traced Converse calls through the AWS SDK; the HTTP client and
 # runtime features are the application's choice.
 aws-sdk-bedrockruntime = { version = "1.153", default-features = false, optional = true }
@@ -65,7 +68,7 @@ tracing-layer = ["otel", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
 # The `#[observe]` attribute (`langfuse_rust_sdk::observe`).
 macros = ["otel", "dep:langfuse-rust-sdk-macros"]
 # Traced OpenAI calls through async-openai (`openai::OpenAI`).
-openai = ["otel", "dep:async-openai"]
+openai = ["otel", "dep:async-openai", "dep:secrecy"]
 # Traced Amazon Bedrock Converse calls through aws-sdk-bedrockruntime (`bedrock::Bedrock`).
 bedrock = ["otel", "dep:aws-sdk-bedrockruntime", "dep:aws-smithy-types"]
 # Blocking client on an internal Tokio runtime (`blocking::LangfuseClient`).
@@ -108,6 +111,14 @@ required-features = ["macros"]
 
 [[example]]
 name = "openai_tracing"
+required-features = ["openai"]
+
+[[example]]
+name = "gateway"
+required-features = ["otel"]
+
+[[example]]
+name = "gateway_openai"
 required-features = ["openai"]
 
 [[example]]

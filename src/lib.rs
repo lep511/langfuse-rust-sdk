@@ -114,6 +114,8 @@ pub mod api;
 pub mod config;
 /// Error types returned by every SDK method.
 pub mod error;
+// Documented by its own `//!` docs, so intra-doc links resolve inside the module.
+pub mod gateway;
 /// Low-level HTTP transport shared by all API clients.
 pub mod http;
 /// Trace and observation ID generation (random or derived from a seed).

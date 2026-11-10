@@ -102,6 +102,7 @@ pub mod __observe;
 pub mod attributes;
 mod experiment;
 mod exporter;
+mod gateway;
 mod observation;
 mod options;
 mod processor;
@@ -113,6 +114,7 @@ mod tracing_layer;
 #[cfg(feature = "macros")]
 pub use __observe::ENV_OBSERVE_IO_CAPTURE_ENABLED;
 pub use exporter::{MaskableSpan, SharedSpanExporter};
+pub(crate) use gateway::gateway_context_headers;
 pub use observation::{
     Level, Observation, ObservationType, TraceContext, current_observation_id, current_trace_id,
     in_trace,

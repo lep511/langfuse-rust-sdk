@@ -70,6 +70,14 @@
 //!
 //! The `async-openai` API changes between 0.x versions: this module is built
 //! for 0.43 (`chat-completion`, `embedding` and `responses` features).
+//!
+//! # Langfuse AI Gateway
+//!
+//! Calls through the [Langfuse AI Gateway](crate::gateway) are recorded by
+//! the gateway itself: do not wrap such a client in [`OpenAI`], or every call
+//! is recorded twice. Use a plain `async_openai::Client` with
+//! [`GatewayClient::openai_config`](crate::gateway::GatewayClient::openai_config),
+//! which sends the trace context of the current observation instead.
 
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};

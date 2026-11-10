@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-sdk-macros"
-version = "0.10.3"
+version = "0.11.0"
 edition = "2024"
 description = "The #[observe] attribute of langfuse-rust-sdk (use it through the `macros` feature of that crate)"
 license = "MIT"

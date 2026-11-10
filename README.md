@@ -24,6 +24,7 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 - Token usage of other providers (Anthropic, Bedrock, Vertex AI / Gemini, IBM, LangChain-style) translated into Langfuse usage details (`usage::normalize_usage`, `Observation::set_provider_usage`)
 - Skills discovery (`skills::discover_skills`) and the skills available to an agent on its spans
 - Per-request options on a client view (`client.with_options`): timeout, retries, headers, query and body parameters, response headers
+- [Langfuse AI Gateway](https://langfuse.com/docs/gateway/overview) (beta): `gateway::GatewayClient` calls the gateway's OpenAI and Anthropic routes (JSON and streams), with the `langfuse-*` request headers and, with `otel`, the trace context of the current observation, so the gateway's generations join the SDK's traces; with `openai`, an `async-openai` configuration for the gateway
 
 ## Supported Resources
 
@@ -75,7 +76,7 @@ langfuse-rust-sdk = { version = "0.10", features = ["unstable"] }
 | `otel` | Tracing on OpenTelemetry (`otel` module), `run_experiment` |
 | `macros` | `#[observe]` (enables `otel`) |
 | `tracing-layer` | `otel::tracing_layer`, the bridge from the `tracing` crate (enables `otel`) |
-| `openai` | `openai::OpenAI`, traced `async-openai` 0.43 calls (enables `otel`) |
+| `openai` | `openai::OpenAI`, traced `async-openai` 0.43 calls, and `gateway::GatewayOpenAIConfig` (enables `otel`) |
 | `bedrock` | `bedrock::Bedrock`, traced `aws-sdk-bedrockruntime` Converse calls (enables `otel`) |
 | `blocking` | `blocking::LangfuseClient`, on an internal Tokio runtime |
 
@@ -175,6 +176,8 @@ LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... cargo run --example 
 | [`rig_tracing`](integration-tests/examples/rig_tracing.rs) | Trace a rig agent through `otel::tracing_layer` (`-p langfuse-rust-sdk-integration-tests --features tracing-layer`, needs an OpenAI-compatible endpoint, writes one trace) |
 | [`openai_tracing`](examples/openai_tracing.rs) | Trace a chat completion, a streamed one and an embedding made with async-openai (`--features openai`, needs `OPENAI_API_KEY`, writes one trace) |
 | [`bedrock_tracing`](integration-tests/examples/bedrock_tracing.rs) | Trace a Converse call and a streamed one made with aws-sdk-bedrockruntime (`-p langfuse-rust-sdk-integration-tests --features bedrock`, needs AWS credentials with Bedrock access, writes one trace) |
+| [`gateway`](examples/gateway.rs) | Call Claude Sonnet 5.5 and a streamed Claude Opus 5.5 through the Langfuse AI Gateway inside an SDK span, so the gateway's generations join its trace (`--features otel`, needs `LANGFUSE_GATEWAY_KEY` and `LANGFUSE_GATEWAY_HOST`, writes one trace and the gateway's generations) |
+| [`gateway_openai`](examples/gateway_openai.rs) | async-openai through the gateway with `GatewayClient::openai_config` (`--features openai`, needs the gateway variables and Claude Sonnet/Opus 5.5 on the gateway's OpenAI route or `GATEWAY_OPENAI_MODEL`, writes one trace and one gateway generation) |
 | [`blocking`](examples/blocking.rs) | The blocking client from a plain `main`, with a per-request options view (`--features blocking`, read-only) |
 
 ## Configuration
@@ -484,6 +487,65 @@ provider returned in its own shape, translated like the Python SDK's LangChain i
 `cache_creation` tiers), Bedrock invocation metrics, Vertex AI / Gemini (`prompt_token_count`,
 per-modality details), IBM, and LangChain-style `input_token_details`. Through the `tracing`
 bridge, `gen_ai.usage.*` counts (recorded as strings by `tracing`) are exported as integers.
+
+## AI Gateway (beta)
+
+The [Langfuse AI Gateway](https://langfuse.com/docs/gateway/overview) forwards OpenAI and
+Anthropic API calls with the organization's provider credentials and records each one as a
+generation (usage, cost, latency; input and output in the `FULL` ingestion mode). Create a
+gateway key under **AI Gateway → Gateway keys** and set `LANGFUSE_GATEWAY_KEY` and
+`LANGFUSE_GATEWAY_HOST` (e.g. `https://gateway.us.cloud.langfuse.com`; without it, the host of
+the Langfuse Cloud region of `LANGFUSE_BASE_URL` is used). No feature is needed:
+
+```rust
+use langfuse_rust_sdk::gateway::{GatewayClient, GatewayHeaders};
+use serde_json::{Value, json};
+
+let gateway = GatewayClient::from_env()?;
+let models = gateway.anthropic_models::<Value>().await?.body; // IDs are `<credential>:<model>`
+
+let reply = gateway
+    .with_headers(GatewayHeaders::default().with_session_id("chat-42").with_tag("support"))
+    .messages::<Value, _>(&json!({
+        "model": "anthropic-prod:claude-sonnet-5-5",
+        "max_tokens": 256,
+        "messages": [{"role": "user", "content": "Say hello"}],
+    }))
+    .await?;
+println!("{} (trace {:?})", reply.body["content"][0]["text"], reply.info.trace_id);
+
+let mut stream = gateway.messages_stream(&body).await?;       // server-sent events
+while let Some(event) = stream.next().await { let event = event?; /* event.json()? */ }
+```
+
+`responses`, `responses_compact`, `chat_completions` (and their `_stream` variants), `messages`,
+`count_tokens` and the two model lists cover every route of the gateway; bodies are the
+provider's own (`serde_json::Value` or your types). `GatewayResponseInfo` holds the gateway's
+response headers: request ID, the trace and observation IDs of the recorded generation (to score
+it), the ingestion project and the provider. `GatewayHeaders` sets user (service account keys),
+session, environment, tags, metadata and trace name, percent-encoded and within the gateway's
+1 KiB / 8 KiB limits. Model calls are retried only when the provider was not reached (408, 429,
+503, connection failures), so a retry never records or bills a call twice; the default timeout
+is 10 minutes.
+
+**Trace context (feature `otel`).** A call made inside an observation sends its `traceparent`
+and the attributes of `propagate_attributes` (user, session, environment, tags, metadata, trace
+name; else the tracer's environment), so the gateway's generation becomes a child of that
+observation. Wrap gateway calls in a span or an agent, not a generation, and do not also trace
+them with `openai::OpenAI`: the gateway already records the call. `GatewayHeaders::current()`
+gives the same headers for other HTTP clients. The SDK spans and the gateway's generation share
+one trace only if the tracer's API keys belong to the gateway's ingestion project
+(`GatewayResponseInfo::project_id`).
+
+**async-openai (feature `openai`).** `gateway.openai_config()` is an `async_openai` configuration
+for `{host}/openai/v1` with the gateway key that adds those headers to every request:
+
+```rust
+let openai = async_openai::Client::with_config(gateway.openai_config());
+let response = span.in_scope(openai.responses().create(request)).await?; // child of `span`
+```
+
+See [`gateway`](examples/gateway.rs) and [`gateway_openai`](examples/gateway_openai.rs).
 
 ## Scores in the background
 

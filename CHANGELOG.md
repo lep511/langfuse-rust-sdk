@@ -4,6 +4,55 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.11.0] - 2026-11-10
+
+Support for the [Langfuse AI Gateway](https://langfuse.com/docs/gateway/overview),
+launched in public beta on 2026-11-04: it forwards OpenAI and Anthropic API
+calls with the organization's provider credentials and records each one as a
+generation. The gateway is not part of the public API (`openapi.yml` is
+unchanged: the 120 operations match the spec served by Langfuse Cloud), so
+the SDK adds a client for it. Checked against the real gateway (Langfuse
+Cloud US, Bedrock credential): models, messages, streamed messages, chat
+completions, Responses API through async-openai, and trace IDs joining the
+SDK's traces.
+
+### Added
+
+- `gateway` module (no feature): `GatewayClient` (`from_env` reads
+  `LANGFUSE_GATEWAY_KEY` and `LANGFUSE_GATEWAY_HOST`, else the gateway of the
+  Langfuse Cloud region of `LANGFUSE_BASE_URL`) with every gateway route:
+  `openai_models`, `anthropic_models`, `responses`, `responses_compact`,
+  `chat_completions`, `messages`, `count_tokens`, the streams
+  `responses_stream`, `chat_completions_stream` and `messages_stream`
+  (server-sent events), and `get`/`post`/`post_stream` for other paths.
+  Responses carry `GatewayResponseInfo` (request ID, trace and observation
+  IDs of the recorded generation, organization, ingestion project,
+  provider). Model calls are retried only when the provider was not reached
+  (408, 429, 503, connection failures); the default timeout is 10 minutes.
+- `GatewayHeaders`: the gateway's `langfuse-*` request headers (user,
+  session, environment, tags, metadata, trace name) and the W3C
+  `traceparent`/`tracestate`, percent-encoded as the gateway decodes them and
+  kept within its 1 KiB per value and 8 KiB total limits.
+- With `otel`: calls made inside an observation send its `traceparent` and
+  the propagated attributes (else the tracer's environment), so the
+  gateway's generation becomes a child of the observation
+  (`GatewayHeaders::from_context` / `current` for other HTTP clients).
+- With `openai`: `GatewayClient::openai_config` returns a
+  `GatewayOpenAIConfig` for `async_openai::Client::with_config`, which adds
+  those headers to every request. New optional dependency `secrecy` 0.10
+  (already used by async-openai).
+- Examples `gateway` (`--features otel`; Claude Sonnet 5.5, and Claude
+  Opus 5.5 for the stream) and `gateway_openai` (`--features openai`). They
+  only call Claude models, which Langfuse prices: the OpenAI-route call runs
+  when that route offers Claude Sonnet or Opus 5.5, or with
+  `GATEWAY_OPENAI_MODEL`, never with a model picked from the list, which may
+  have no Langfuse price (its cost would count as $0).
+
+### Changed
+
+- The `openai` module docs warn against wrapping a gateway client in
+  `openai::OpenAI` (each call would be recorded twice).
+
 ## [0.10.3] - 2026-11-10
 
 A development-only release: the library code and its API are unchanged. It

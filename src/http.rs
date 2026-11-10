@@ -806,14 +806,14 @@ fn is_idempotent(method: &Method) -> bool {
 /// request was never sent, so it is safe for every method; a timeout or a
 /// dropped connection may hit after the server processed the request, so only
 /// idempotent requests are repeated.
-fn retry_transport_error(err: &reqwest::Error, idempotent: bool) -> bool {
+pub(crate) fn retry_transport_error(err: &reqwest::Error, idempotent: bool) -> bool {
     if err.is_builder() || err.is_redirect() {
         return false;
     }
     err.is_connect() || idempotent
 }
 
-fn parse_retry_after_header(headers: &HeaderMap) -> Option<Duration> {
+pub(crate) fn parse_retry_after_header(headers: &HeaderMap) -> Option<Duration> {
     headers
         .get("retry-after")
         .and_then(|v| v.to_str().ok())
