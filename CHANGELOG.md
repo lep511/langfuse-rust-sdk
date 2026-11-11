@@ -4,6 +4,13 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.11.1] - 2026-11-11
+
+### Changed
+
+- `langfuse-rust-sdk-macros` (feature `macros`) builds on `syn` 3 instead of
+  `syn` 2. `#[observe]` behaves as before.
+
 ## [0.11.0] - 2026-11-10
 
 Support for the [Langfuse AI Gateway](https://langfuse.com/docs/gateway/overview),

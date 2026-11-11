@@ -222,12 +222,14 @@ Follow [Semantic Versioning](https://semver.org/) when choosing the next version
 
 ### Step 1 — Update the version in `Cargo.toml`
 
-Open `Cargo.toml` and bump `version`:
+`langfuse-rust-sdk` and `langfuse-rust-sdk-macros` share one version, set in the root `Cargo.toml`. Bump it together with the exact pin on the macros crate:
 
 ```toml
-[package]
-name = "langfuse-rust-sdk"
+[workspace.package]
 version = "1.9.1"   # was 1.9.0
+
+[workspace.dependencies]
+langfuse-rust-sdk-macros = { version = "=1.9.1", path = "macros" }
 ```
 
 If the crate has a `Cargo.lock` checked in (binary/application crates), update it too:
@@ -279,8 +281,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 # (powershell)
 $env:RUSTDOCFLAGS="-D warnings"; cargo doc --no-deps
 
-# Dry-run: catches metadata errors before uploading
-cargo publish --dry-run
+# Dry-run of both crates: catches metadata errors before uploading, and verifies the
+# main crate against the new macros version before either is on crates.io
+cargo publish --dry-run -p langfuse-rust-sdk-macros -p langfuse-rust-sdk
 ```
 
 Fix every error or warning before continuing. The dry-run simulates the full publish process without uploading.
@@ -306,10 +309,10 @@ git push origin main --tags
 ### Step 5 — Publish
 
 ```bash
-cargo publish
+cargo publish -p langfuse-rust-sdk-macros -p langfuse-rust-sdk
 ```
 
-Cargo will package the crate, upload it, and print a confirmation URL. The new version is live immediately but docs.rs may take a few minutes to build.
+Cargo publishes them in dependency order (the macros crate first, since the main crate pins its exact version), uploads each one, and prints a confirmation URL. The new version is live immediately but docs.rs may take a few minutes to build.
 
 ---
 

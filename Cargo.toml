@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-sdk"
-version = "0.11.0"
+version.workspace = true
 edition = "2024"
 description = "Rust SDK for the Langfuse LLM observability API"
 license = "MIT"
@@ -19,8 +19,18 @@ exclude = [".cargo/"]
 # trybuild project built from its dev-dependencies, never compile them.
 members = ["macros", "integration-tests"]
 
+# Shared by langfuse-rust-sdk and langfuse-rust-sdk-macros: bump it together with the
+# `=x.y.z` pin on langfuse-rust-sdk-macros below.
+[workspace.package]
+version = "0.11.1"
+
+[workspace.dependencies]
+# `#[observe]` expands to calls into the hidden `otel::__observe` runtime, so both crates
+# must have the same version.
+langfuse-rust-sdk-macros = { version = "=0.11.1", path = "macros" }
+
 [dependencies]
-langfuse-rust-sdk-macros = { version = "=0.11.0", path = "macros", optional = true }
+langfuse-rust-sdk-macros = { workspace = true, optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
