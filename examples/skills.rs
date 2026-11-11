@@ -1,5 +1,20 @@
-//! Create a skill version, fetch it back, and use YamlTool to
-//! build frontmatter, extract it, and convert skill data to YAML.
+//! Skill management: publish a version of a skill (a `SKILL.md` with YAML
+//! frontmatter plus a reference file), fetch it back with its file contents,
+//! and list the project's skills. `YamlTool`, the SDK's small YAML utility,
+//! builds and parses the frontmatter and shows a deep merge of two YAML
+//! documents along the way.
+//!
+//! A skill is a set of files an agent loads on demand; Langfuse versions it
+//! like a prompt. Its name and description come from the frontmatter of
+//! `SKILL.md`, not from the request.
+//!
+//! **Writes data:** every run adds a version to the skill
+//! `rust-sdk-demo-skill`, which is kept. Delete versions with
+//! `client.skills.delete_version(name, version)`; the API has no call that
+//! deletes a whole skill.
+//!
+//! **Docs:** <https://langfuse.com/docs/skill-management/overview>,
+//! <https://langfuse.com/docs/skill-management/version-control>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -15,7 +30,9 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
-/// Build SKILL.md content with YAML frontmatter using YamlTool.
+/// `SKILL.md`: YAML frontmatter between `---` lines, then the instructions.
+/// `name` and `description` are required; the description tells an agent
+/// what the skill does and when to use it.
 fn build_skill_md(
     name: &str,
     description: &str,
@@ -29,7 +46,8 @@ fn build_skill_md(
     Ok(format!("---\n{}---\n\n{body}", yaml))
 }
 
-/// Build a reference file from a YAML-defined checklist.
+/// A supporting file of the skill: a markdown checklist, with the same data
+/// as YAML in a trailing comment.
 fn build_checklist_md(items: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
     let data = serde_json::json!({ "checklist": items });
     let yaml_repr = YamlTool::to_string(&data)?;
@@ -47,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = build_client()?;
     let skill_name = "rust-sdk-demo-skill";
 
-    // 1. Build SKILL.md using YamlTool to serialize the frontmatter
+    // 1. Build the two files locally. Nothing is sent yet.
     println!("=== Building skill files with YamlTool ===\n");
 
     let skill_md = build_skill_md(
@@ -69,12 +87,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
     println!("Generated checklist.md ({} bytes)", checklist_md.len());
 
-    // Validate both files are valid documents
+    // Check that the frontmatter between the two `---` lines parses as YAML.
     let fm_yaml = &skill_md[skill_md.find("---").unwrap() + 4..skill_md.find("\n---").unwrap()];
     YamlTool::validate(fm_yaml)?;
     println!("Frontmatter YAML validated successfully");
 
-    // 2. Create the skill version
+    // 2. Publish. A version holds the complete file set: a file left out of
+    //    the request is not part of the new version. The new version gets the
+    //    `latest` label; `production` or `staging` are assigned separately
+    //    (`client.skills.set_version_labels`).
     println!("\n=== Creating skill version ===\n");
 
     let created = client
@@ -96,7 +117,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  - {} ({} bytes)", f.path, f.content_length);
     }
 
-    // 3. Fetch the skill and extract frontmatter with YamlTool
+    // 3. Fetch it back. Without a label or version the API returns the
+    //    `production` version (404 if there is none), so ask for `latest`.
+    //    File contents are only included with `include_content`.
     println!("\n=== Fetching skill and extracting frontmatter ===\n");
 
     let fetched = client
@@ -132,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         body.chars().take(80).collect::<String>()
     );
 
-    // 4. Convert skill metadata to YAML for display
+    // 4. Any `Serialize` value can be printed as YAML.
     println!("\n=== Skill metadata as YAML ===\n");
 
     let metadata = serde_json::json!({
@@ -151,7 +174,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let yaml_output = YamlTool::to_string(&metadata)?;
     println!("{yaml_output}");
 
-    // 5. Deep-merge an overlay config onto skill settings
+    // 5. Deep merge of two YAML documents (not a Langfuse API call): keys of
+    //    the overlay win, nested mappings are merged key by key.
     println!("=== Merging skill config overlay ===\n");
 
     let mut base_config = YamlTool::parse_value(
@@ -165,7 +189,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Merged config:");
     println!("{}", YamlTool::to_string(&base_config)?);
 
-    // 6. List all skills
+    // 6. One entry per skill, with its latest and production versions
+    //    (page-based pagination).
     println!("=== All skills ===\n");
 
     let skills = client

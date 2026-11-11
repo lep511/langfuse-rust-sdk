@@ -1,6 +1,17 @@
-//! Create a dataset, upsert three items (stable IDs, so reruns update them
-//! instead of adding more), and fetch the dataset with all its items. Writes a
-//! dataset named `rust-sdk-example`; the API cannot delete datasets.
+//! Create a dataset, upsert three items into it, fetch the dataset back with
+//! all of its items, and list the project's datasets. Datasets hold the test
+//! cases (input and expected output) that experiments run on.
+//!
+//! **Writes data:** the dataset `rust-sdk-example` with three items, kept.
+//! Running the example again changes nothing: dataset names are unique in a
+//! project (creating an existing name does not add a second dataset) and the
+//! items have fixed IDs, so they are updated instead of duplicated. The
+//! public API cannot delete a dataset; remove it in the UI, or delete single
+//! items with `client.dataset_items.delete(item_id)`.
+//!
+//! To run an experiment on the dataset, see the `run_experiment` example.
+//!
+//! **Docs:** <https://langfuse.com/docs/evaluation/experiments/datasets>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -22,7 +33,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    // Create a dataset
+    // `input_schema` and `expected_output_schema` could hold JSON Schemas
+    // that every item is validated against. A `/` in the name would put the
+    // dataset into a folder in the UI.
     let dataset = client
         .datasets
         .create(&CreateDatasetRequest {
@@ -35,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("Created dataset: {} ({})", dataset.name, dataset.id);
 
-    // Add items to the dataset
+    // Three question/answer pairs.
     let items = [
         ("What is Rust?", "Rust is a systems programming language."),
         (
@@ -46,7 +59,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for (index, (input, expected)) in items.iter().enumerate() {
-        // `create_dataset_item` also uploads media found in the item (see the `media` module).
+        // Items are upserted on their ID, which is unique in the project (it
+        // cannot be reused in another dataset); without an ID every call adds
+        // a new item. `client.create_dataset_item` is the high-level variant
+        // of `client.dataset_items.create`: it first uploads the media found
+        // in the item (see the `media` example).
         let item = client
             .create_dataset_item(&CreateDatasetItemRequest {
                 id: Some(format!("rust-sdk-example-{index}")),
@@ -58,7 +75,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Upserted item: {}", item.id);
     }
 
-    // Fetch the dataset back with every item.
+    // `get_dataset` reads the dataset and then every page of its items;
+    // `client.datasets.get` returns the dataset alone.
     let fetched = client
         .get_dataset(&dataset.name, &GetDatasetOptions::default())
         .await?;
@@ -72,7 +90,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  - {}: {:?}", item.id, item.input);
     }
 
-    // List all datasets
+    // Page-based pagination: `meta` has the totals, and
+    // `datasets.list_pages` would walk through every page.
     let all = client
         .datasets
         .list(&PageParams {

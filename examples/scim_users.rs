@@ -1,9 +1,18 @@
-//! Inspect the SCIM 2.0 provisioning endpoint: supported features, resource
-//! types, and every organization user (SCIM pagination with `startIndex`).
-//! Read-only.
+//! Inspect the SCIM 2.0 endpoints (`/api/public/scim`), which identity
+//! providers use to provision the users of an organization: supported
+//! features, resource types, and every organization user (SCIM pagination
+//! with `startIndex`).
 //!
-//! Requires an **organization-scoped** API key. Set `SCIM_USER_EMAIL` to look up
-//! a single user with a SCIM filter instead of listing everyone.
+//! **Read-only:** writes no data.
+//!
+//! **Needs:** an **organization-scoped** API key (on Langfuse Cloud part of
+//! the Enterprise plan). With a project key the API answers 403 and the
+//! example explains what is missing and exits successfully.
+//!
+//! Set `SCIM_USER_EMAIL` to look up a single user with a SCIM filter instead
+//! of listing everyone.
+//!
+//! **Docs:** <https://langfuse.com/docs/administration/scim-and-org-api>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-<org key> LANGFUSE_SECRET_KEY=sk-lf-<org key> \
@@ -24,6 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
+    // `GET /ServiceProviderConfig`: what the SCIM implementation supports. It
+    // is also the call that shows whether the key is organization-scoped.
     let config = match client.scim.get_service_provider_config().await {
         Ok(config) => config,
         Err(err @ (LangfuseError::Unauthorized { .. } | LangfuseError::AccessDenied { .. })) => {
@@ -47,6 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  auth: {} ({})", scheme.name, scheme.r#type);
     }
 
+    // `GET /ResourceTypes`: the kinds of resources that can be provisioned.
     let resource_types = client.scim.get_resource_types().await?;
     println!(
         "\n=== Resource types ({}) ===",
@@ -56,7 +68,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  {} at {} (schema {})", rt.name, rt.endpoint, rt.schema);
     }
 
-    // Users: either one filtered lookup or all pages. SCIM indexes start at 1.
+    // Users: either one filtered lookup or all pages. SCIM pagination is
+    // neither page- nor cursor-based: `startIndex` is the 1-based position of
+    // the first result and `count` the page size; `totalResults` tells when
+    // to stop.
     let filter = std::env::var("SCIM_USER_EMAIL")
         .ok()
         .map(|email| format!("userName eq \"{email}\""));

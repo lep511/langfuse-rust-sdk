@@ -1,4 +1,16 @@
-//! Register custom model definitions with pricing information.
+//! Register a custom model definition with prices, list the project's model
+//! definitions, and delete the new one again. Langfuse uses model definitions
+//! to compute the cost of generations: the model name of a generation is
+//! matched against `match_pattern`, and its usage is multiplied by the prices.
+//!
+//! **Writes data**, then cleans up: the model `my-fine-tuned-llm` is deleted
+//! at the end.
+//!
+//! Custom definitions take priority over the ones Langfuse maintains, and a
+//! new or changed definition only applies to generations ingested afterwards:
+//! costs of existing generations are not recalculated.
+//!
+//! **Docs:** <https://langfuse.com/docs/observability/features/token-and-cost-tracking>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -19,12 +31,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    // Register a custom model with pricing
+    // `new(model_name, match_pattern, unit)`: the pattern is a regular
+    // expression, here case-insensitive and matching every model name that
+    // starts with `my-fine-tuned-llm`. Prices are in USD per unit, so per
+    // token: $3 and $12 per million tokens.
+    //
+    // `input_price` and `output_price` are the simple, legacy way to set
+    // prices (they create one default pricing tier); use `pricing_tiers` when
+    // the price depends on the usage, e.g. on the context size.
     let model = client
         .models
         .create(&CreateModelRequest {
-            input_price: Some(0.003),
-            output_price: Some(0.012),
+            input_price: Some(0.000_003),
+            output_price: Some(0.000_012),
             ..CreateModelRequest::new(
                 "my-fine-tuned-llm",
                 "(?i)^my-fine-tuned-llm.*$",
@@ -38,7 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Input price: {:?}", model.input_price);
     println!("  Output price: {:?}", model.output_price);
 
-    // List all models
+    // The list holds the project's own definitions and the ones maintained by
+    // Langfuse (a few hundred), page by page.
     let models = client
         .models
         .list(&PageParams {
@@ -55,7 +75,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  - {} ({:?}) — {}", m.model_name, m.unit, m.id);
     }
 
-    // Clean up: delete the model we created
+    // Clean up. Only custom definitions can be deleted, not the ones
+    // maintained by Langfuse.
     client.models.delete(&model.id).await?;
     println!("\nDeleted model: {}", model.id);
 

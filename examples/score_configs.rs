@@ -1,4 +1,15 @@
-//! Create and list score configurations.
+//! Create a numeric and a categorical score config, then list the project's
+//! configs. A score config is the schema of a score: its data type, the value
+//! range of a numeric score or the allowed categories of a categorical one.
+//! Scores that reference a config (`config_id`) are validated against it, and
+//! annotation queues are built from configs.
+//!
+//! **Writes data:** every run adds two configs, `relevance-score` and
+//! `response-quality` (names do not have to be unique). Score configs cannot
+//! be deleted, only archived: in the UI, or with
+//! `client.score_configs.update(config_id, ..)` setting `is_archived`.
+//!
+//! **Docs:** <https://langfuse.com/docs/evaluation/scores/data-model>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -19,7 +30,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    // Create a numeric score config with min/max range
+    // Numeric: an optional range. A score that references the config must
+    // have the config's name and a value inside the range.
     let numeric_config = client
         .score_configs
         .create(&CreateScoreConfigRequest {
@@ -41,7 +53,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         numeric_config.max_value.unwrap_or(0.0)
     );
 
-    // Create a categorical score config
+    // Categorical: the allowed labels, each mapped to a number so that the
+    // score can be aggregated. `min_value` and `max_value` do not apply.
     let cat_config = client
         .score_configs
         .create(&CreateScoreConfigRequest {
@@ -75,7 +88,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cat_config.name, cat_config.id
     );
 
-    // List all score configs
+    // Page-based pagination: `meta` has the totals. Archived configs are
+    // listed too, flagged with `is_archived`.
     let configs = client
         .score_configs
         .list(&PageParams {

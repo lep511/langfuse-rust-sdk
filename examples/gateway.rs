@@ -1,22 +1,41 @@
 //! Call models through the Langfuse AI Gateway (beta) inside an SDK trace:
 //! list the models of the gateway key, then send an Anthropic Messages call
-//! with Claude Sonnet 5.5 and a streamed one with Claude Opus 5.5 from a span,
-//! so the gateway records its generations as children of that span. Prints
-//! the trace and observation IDs of every recorded generation.
+//! with Claude Sonnet 5.5 and a streamed one with Claude Opus 5.5 from an
+//! agent observation, so the gateway records its generations as children of
+//! that observation. Prints the trace and observation IDs of every recorded
+//! generation.
 //!
-//! Writes data: one SDK trace (agent span) in the project of the API keys and
-//! one gateway generation per model call in the gateway's ingestion project,
-//! billed by your provider. They are kept so you can open them. Delete the
-//! trace in the UI or with `client.traces.delete(trace_id)`.
+//! The gateway forwards OpenAI and Anthropic API calls with the provider
+//! connections of your organization and records each call as a generation
+//! with usage and cost, so the SDK does not trace the model calls itself. A
+//! call made inside an observation sends its W3C `traceparent` and the
+//! propagated attributes (session, tags, metadata, ...) as request headers;
+//! that is what puts the gateway's generation into the SDK's trace.
 //!
-//! Needs `LANGFUSE_GATEWAY_KEY` and `LANGFUSE_GATEWAY_HOST` (or a Langfuse
-//! Cloud `LANGFUSE_BASE_URL`) besides the usual keys. The models are the
-//! key's Claude Sonnet 5.5 and Claude Opus 5.5 (US inference profiles first),
-//! unless `GATEWAY_ANTHROPIC_MODEL` / `GATEWAY_ANTHROPIC_STREAM_MODEL` name
-//! others. An OpenAI Chat Completions call is added only when the OpenAI
-//! route offers one of those Claude models or `GATEWAY_OPENAI_MODEL` names a
-//! model: the example never picks a model Langfuse has no price for, whose
-//! cost would count as $0.
+//! **Writes data:** one SDK trace (the agent observation) in the project of
+//! the API keys and one gateway generation per model call in the gateway's
+//! ingestion project. They are kept so you can open them. Delete the trace in
+//! the UI or with `client.traces.delete(trace_id)`. The two model calls are
+//! billed by your provider.
+//!
+//! **Needs:** the `otel` feature, and `LANGFUSE_GATEWAY_KEY` plus
+//! `LANGFUSE_GATEWAY_HOST` (or a Langfuse Cloud `LANGFUSE_BASE_URL`, from
+//! which the host is derived) besides the usual keys. A gateway key only
+//! works on the gateway host of its own region and cannot call the public
+//! API. The models are the key's Claude Sonnet 5.5 and Claude Opus 5.5 (US
+//! inference profiles first), unless `GATEWAY_ANTHROPIC_MODEL` /
+//! `GATEWAY_ANTHROPIC_STREAM_MODEL` name others. An OpenAI Chat Completions
+//! call is added only when the OpenAI route offers one of those Claude models
+//! or `GATEWAY_OPENAI_MODEL` names a model: the example never picks a model
+//! Langfuse has no price for, whose cost would count as $0.
+//!
+//! If both model lists are empty, or a call fails with
+//! `404 No eligible provider connection`, the organization has no enabled
+//! provider connection for the key: an admin adds one under AI Gateway →
+//! Providers & Models.
+//!
+//! **Docs:** <https://langfuse.com/docs/gateway/overview>,
+//! <https://langfuse.com/docs/gateway/features/tracing>
 //!
 //! ```sh
 //! LANGFUSE_GATEWAY_HOST=https://gateway.cloud.langfuse.com LANGFUSE_GATEWAY_KEY=... \
@@ -37,6 +56,8 @@ const OPUS: &[&str] = &["us.anthropic.claude-opus-5-5", "claude-opus-5-5"];
 
 /// A model ID of `models` (an OpenAI or Anthropic list) containing one of
 /// `preferred` (in order), unless the environment variable `env` names one.
+/// Gateway model IDs have the form `<connection>:<model>`, e.g.
+/// `amazon-bedrock:us.anthropic.claude-sonnet-5-5`, hence `contains`.
 fn pick_model(models: &Value, env: &str, preferred: &[&str]) -> Option<String> {
     if let Ok(model) = std::env::var(env) {
         return Some(model);
@@ -52,6 +73,10 @@ fn pick_model(models: &Value, env: &str, preferred: &[&str]) -> Option<String> {
         .map(|id| (*id).to_owned())
 }
 
+/// What the gateway reports in its `langfuse-*` response headers: the trace
+/// and observation ID of the generation it recorded, the provider that
+/// served the call and the gateway's request ID (the one to quote in a bug
+/// report).
 fn print_info(call: &str, info: &GatewayResponseInfo) {
     println!(
         "{call}: trace {} generation {} (provider {}, request {})",
@@ -67,9 +92,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = LangfuseClient::new(ClientConfig::from_env()?)?;
     let tracer = client.tracer(TracingOptions::from_env()?)?;
+    // A client of its own: the gateway has its own host and key.
     let gateway = GatewayClient::from_env()?;
     println!("gateway: {}", gateway.host());
 
+    // The models the key can call, one list per API format.
     let anthropic_models = gateway.anthropic_models::<Value>().await?.body;
     let openai_models = gateway.openai_models::<Value>().await?.body;
     let sonnet = pick_model(&anthropic_models, "GATEWAY_ANTHROPIC_MODEL", SONNET)
@@ -92,6 +119,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or("no Claude 5.5 on the OpenAI route: chat completions skipped"),
     );
 
+    // The SDK side of the trace: one agent observation around the calls.
+    // The propagated attributes reach the gateway too, as request headers,
+    // and end up on its generations.
     let agent = tracer.start_observation("gateway-example", ObservationType::Agent);
     let attributes = PropagatedAttributes::default()
         .with_session_id("rust-sdk-gateway-example")
@@ -100,7 +130,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let gateway_project = agent
         .in_scope(propagate_attributes(attributes, async {
-            // Not a generation: the gateway records the generation itself.
+            // A plain Anthropic Messages request, with the gateway's model
+            // ID. No generation is started here: the gateway records the
+            // generation itself, and tracing the call again would duplicate
+            // it.
             let question = "In one sentence: why route model calls through a gateway?";
             let reply = gateway
                 .messages::<Value, _>(&json!({
@@ -111,8 +144,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
             print_info("messages", &reply.info);
             println!("  {}", reply.body["content"][0]["text"]);
+            // The gateway used the trace ID of the `traceparent` header.
             assert_eq!(reply.info.trace_id.as_deref(), Some(agent.trace_id()));
 
+            // Streaming: the headers (and with them the IDs) arrive before
+            // the first event; the events are Anthropic's server-sent events.
             let mut stream = gateway
                 .messages_stream(&json!({
                     "model": opus,
@@ -142,8 +178,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  {}", completion.body["choices"][0]["message"]["content"]);
             }
 
-            // Not every provider counts tokens: with a Bedrock credential the
-            // gateway (beta) answers 200 with Bedrock's error body.
+            // `count_tokens` records no generation. Not every provider
+            // counts tokens: with a Bedrock connection the gateway (beta) was
+            // seen to answer 200 with Bedrock's error body, hence the check
+            // of the response shape.
             match gateway
                 .count_tokens::<Value, _>(&json!({
                     "model": sonnet,
@@ -162,6 +200,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     agent.end();
 
+    // The gateway writes to the ingestion project its admins chose, which is
+    // not necessarily the project of the SDK's API keys. The trace ID is the
+    // same either way; the trace is complete only when both are one project.
     println!("\nSDK trace: {}", client.trace_url(agent.trace_id()).await?);
     let sdk_project = client.auth_check().await?.id;
     match gateway_project {

@@ -1,14 +1,21 @@
 //! Human-review workflow with annotation queues: reuse (or create) a queue,
-//! add a trace to it, mark the item as completed, and remove it again.
+//! add a trace to it, list the pending items, mark the item as completed, and
+//! remove it again. Reviewers work through a queue in the Langfuse UI and
+//! score each item along the queue's score configs.
 //!
 //! **Writes data:** the queue `rust-sdk-example-queue` is created on the first
-//! run and reused afterwards (the API cannot delete queues). If the project has
-//! no score config, a numeric one named `rust-sdk-review-quality` is created.
-//! The queue item is deleted at the end.
+//! run and reused afterwards (the public API cannot delete queues, only their
+//! items and assignments). A queue needs at least one score config: the
+//! example takes the project's first active one, or creates a numeric config
+//! named `rust-sdk-review-quality` (score configs cannot be deleted either,
+//! only archived). The queue item is deleted at the end.
 //!
 //! The trace comes from `LANGFUSE_TRACE_ID`, or else from the most recent
-//! observation of the last 24 hours. Set `LANGFUSE_EXAMPLE_USER_ID` to also
-//! assign and unassign a reviewer.
+//! observation of the last 24 hours; without either the example explains what
+//! is missing and exits. Set `LANGFUSE_EXAMPLE_USER_ID` (a Langfuse user ID)
+//! to also assign and unassign a reviewer.
+//!
+//! **Docs:** <https://langfuse.com/docs/evaluation/evaluation-methods/annotation-queues>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -34,7 +41,8 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
-/// An existing active score config, or a new numeric one.
+/// The score dimension reviewers fill in: an existing active (not archived)
+/// score config, or a new numeric one between 0 and 1.
 async fn score_config_id(client: &LangfuseClient) -> Result<String, Box<dyn std::error::Error>> {
     let configs = client
         .score_configs
@@ -62,7 +70,8 @@ async fn score_config_id(client: &LangfuseClient) -> Result<String, Box<dyn std:
     Ok(created.id)
 }
 
-/// The example queue, created on first use.
+/// The example queue, created on first use. Queues have no lookup by name,
+/// so walk through the pages of the list.
 async fn example_queue(
     client: &LangfuseClient,
 ) -> Result<AnnotationQueue, Box<dyn std::error::Error>> {
@@ -102,8 +111,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    // The most recent observation of the last 24 hours: without
-    // `fromStartTime` the v2 API searches from 2020-01-01.
+    // The trace to review: `LANGFUSE_TRACE_ID`, or the trace of the most
+    // recent observation of the last 24 hours (without `fromStartTime` the v2
+    // API searches from 2020-01-01).
     let since = (Utc::now() - Duration::hours(24)).to_rfc3339_opts(SecondsFormat::Secs, true);
     let trace_id = match std::env::var("LANGFUSE_TRACE_ID") {
         Ok(id) => Some(id),
@@ -128,7 +138,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let queue = example_queue(&client).await?;
 
-    // Add the trace for review.
+    // Add the trace for review. Items can also be observations or sessions;
+    // without a status the item starts as PENDING.
     let item = client
         .annotation_queues
         .create_item(
@@ -145,6 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         item.id, item.status
     );
 
+    // What is still waiting for a reviewer.
     let pending = client
         .annotation_queues
         .list_items(
@@ -157,7 +169,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("Pending items in the queue: {}", pending.meta.total_items);
 
-    // Optionally assign a reviewer.
+    // Optionally assign a reviewer to the queue, and remove the assignment
+    // again.
     if let Ok(user_id) = std::env::var("LANGFUSE_EXAMPLE_USER_ID") {
         let assignment = client
             .annotation_queues
@@ -171,7 +184,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Unassigned user {user_id}");
     }
 
-    // A reviewer finished: mark the item as completed.
+    // What the UI does when a reviewer clicks "Complete": mark the item as
+    // COMPLETED. The scores themselves are separate objects, created with the
+    // queue ID (`CreateScoreRequest::queue_id`).
     let done = client
         .annotation_queues
         .update_item(

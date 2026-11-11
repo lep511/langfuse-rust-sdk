@@ -1,9 +1,16 @@
-//! Create text and chat prompts, fetch them through the client-side cache and
-//! compile their variables and placeholders.
+//! Prompt management: create a text prompt and a chat prompt, fetch them by
+//! label, through the client-side cache and with a fallback, and compile
+//! their `{{variables}}` and message placeholders into what a model call
+//! needs. Finally list the project's prompts.
 //!
-//! Writes data: creates (a new version of) the prompts `rust-sdk-greeting` and
-//! `rust-sdk-assistant` and keeps them. Delete them in the UI or with
-//! `client.prompts.delete(name)`.
+//! **Writes data:** every run adds a version to the prompts
+//! `rust-sdk-greeting` and `rust-sdk-assistant`, which are kept. Delete them
+//! in the UI or with `client.prompts.delete(name)` (all versions).
+//!
+//! See `prompt_labels` for promoting versions with labels.
+//!
+//! **Docs:** <https://langfuse.com/docs/prompt-management/get-started>,
+//! <https://langfuse.com/docs/prompt-management/features/caching>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -30,7 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    // Create a text prompt
+    // A text prompt is one string with `{{variables}}`. Creating a prompt
+    // whose name exists adds a new version, which always gets the `latest`
+    // label; `labels` adds more (here `staging`). `config` is free-form JSON
+    // versioned with the prompt, typically the model parameters.
     let text_prompt = client
         .prompts
         .create(&CreatePromptRequest::Text {
@@ -45,7 +55,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Created text prompt:");
     print_prompt(&text_prompt);
 
-    // Create a chat prompt
+    // A chat prompt is a list of messages. A placeholder marks the position
+    // where a list of messages (e.g. the chat history) is inserted when the
+    // prompt is compiled.
     let chat_prompt = client
         .prompts
         .create(&CreatePromptRequest::Chat {
@@ -67,7 +79,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nCreated chat prompt:");
     print_prompt(&chat_prompt);
 
-    // Fetch a prompt by name and label
+    // Fetch by name and label, straight from the API. Without a label or a
+    // version (`client.prompts.get(name)`) the API returns the version
+    // labelled `production`, or 404 when no version has that label.
     println!("\nFetching 'rust-sdk-greeting' with label 'latest'...");
     let fetched = client
         .prompts
@@ -81,8 +95,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     print_prompt(&fetched);
 
-    // Cached fetch: the second call is served from memory. The fallback is used
-    // only if the prompt can be neither fetched nor found in the cache.
+    // What application code should use: `get_cached` keeps prompts in memory
+    // (60 s by default, `LANGFUSE_PROMPT_CACHE_DEFAULT_TTL_SECONDS` or
+    // `with_cache_ttl`), so the second call makes no request. An expired entry
+    // is still returned at once while a background task refreshes it. The
+    // fallback is used only if the prompt can be neither fetched nor found in
+    // the cache; `is_fallback()` tells the two apart.
     let options = GetPromptOptions::default()
         .with_label("staging")
         .with_fallback(PromptFallback::Text("Hello {{name}}!".into()));
@@ -100,11 +118,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::ptr_eq(&greeting, &again),
         greeting.is_fallback()
     );
+    // `variables()` lists the `{{names}}` of the template; `compile`
+    // replaces them and leaves variables without a value as they are.
     println!("  Variables: {:?}", greeting.variables());
     let compiled = greeting.compile(&json!({"name": "Ada", "service": "Langfuse"}))?;
     println!("  Compiled:  {}", compiled.as_text().unwrap_or_default());
 
     // Chat prompt: fill the placeholder with the conversation so far.
+    // Variables are replaced in the inserted messages too.
     let assistant = client
         .prompts
         .get_cached(
@@ -133,7 +154,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // List all prompts
+    // One entry per prompt name, with its versions and the labels in use
+    // (page-based pagination; `name`, `label` and `tag` filter the list).
     let list = client
         .prompts
         .list(&ListPromptsParams {

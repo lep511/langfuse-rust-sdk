@@ -4,6 +4,57 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.11.3] - 2026-11-11
+
+Examples and their documentation only; the library is unchanged. All 31
+examples were run against Langfuse Cloud 4.78.0 and their comments checked
+against the Langfuse documentation.
+
+### Added
+
+- `examples/EXAMPLES.md`: a guide to the examples. For each one: what it
+  shows, what it writes and leaves behind, the features and variables it
+  needs, the SDK calls and endpoints it uses, a sample of its output and the
+  matching Langfuse docs; plus the Langfuse Cloud rate limits that matter
+  when running them repeatedly.
+- The examples are part of the API documentation:
+  - the guide is rendered as the documentation-only module
+    `langfuse_rust_sdk::examples` (it exists under `cfg(doc)` and adds
+    nothing to the compiled crate);
+  - on docs.rs, rustdoc scrapes `examples/` and shows the calls they make
+    under the items they use ("Examples found in repository"), with links to
+    the full example sources. This uses the unstable
+    `-Zrustdoc-scrape-examples` flag through `[package.metadata.docs.rs]`,
+    and `doc-scrape-examples = true` on the `health_check` example, which
+    lets `cargo doc` build the dev-dependencies the examples need. Builds on
+    stable are unaffected.
+
+### Changed
+
+- Every example's doc comment now states what it shows, whether it writes
+  data and how that is cleaned up, what it needs, and links the Langfuse
+  documentation; the inline comments explain why each step is there.
+- `manage_models` registers per-token prices of a realistic size ($3 and $12
+  per million tokens instead of $0.003 and $0.012 per token).
+- `otel_ingestion` sends the model `claude-sonnet-5-5` instead of
+  `claude-3-sonnet`, which matches no model definition and so had no cost.
+- `blocking`: the response hook prints the attempt number and the
+  `Retry-After` header, the only rate-limit header Langfuse documents,
+  instead of an `x-ratelimit-remaining` header that is never sent.
+- `create_score`: the placeholder trace ID is a constant, `TRACE_ID`.
+
+### Fixed
+
+- `error_handling`: the "Unauthorized" step called the health endpoint, which
+  needs no credentials, so it never showed `LangfuseError::Unauthorized`. It
+  now calls `auth_check` with the invalid keys.
+- `observations`: the MODEL column was always `-` because the `model` field
+  group was not requested; the example now asks for `core,basic,model,metrics`.
+  Names are truncated by characters: slicing by bytes could panic on a
+  non-ASCII name.
+- `openai_tracing` doc comment: the embedding call is recorded as an
+  `embedding` observation, not as a generation.
+
 ## [0.11.2] - 2026-11-11
 
 `api/openapi.yml` follows the spec served by Langfuse Cloud on 2026-11-11:

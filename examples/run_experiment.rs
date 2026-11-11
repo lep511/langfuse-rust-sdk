@@ -1,15 +1,32 @@
-//! Run an experiment on local data: a toy lookup "model" answers three
-//! capital-city questions, two evaluators and a composite evaluator score each
-//! answer, and a run evaluator computes the accuracy. Prints the report,
-//! waits until Langfuse lists the experiment, then deletes its traces and
-//! scores and checks whether the experiment is still listed.
+//! Run an experiment with the experiment runner, on local data: a toy lookup
+//! "model" answers three capital-city questions, two evaluators and a
+//! composite evaluator score each answer, and a run evaluator computes the
+//! accuracy of the whole run. Prints the report, waits until Langfuse lists
+//! the experiment, then deletes its traces and scores and checks whether the
+//! experiment is still listed.
 //!
-//! Writes one trace per item plus their scores, all deleted at the end. Set
-//! `KEEP_EXPERIMENT=1` to keep them and open the printed URL instead.
+//! The pieces of an experiment:
+//!
+//! - **data**: local items (as here) or the items of a Langfuse dataset;
+//! - **task**: the function under test, called once per item, each call in a
+//!   trace of its own;
+//! - **evaluators**: score one item's output, the scores land on its trace;
+//! - **composite evaluator**: combines the scores of one item into another;
+//! - **run evaluators**: score the run as a whole (averages, accuracy, ...).
+//!
+//! **Writes data:** one trace per item plus ten scores, all deleted at the
+//! end. The cleanup makes 11 delete requests, which count against the
+//! trace-data-deletion rate limit of Langfuse Cloud (50 requests per day on
+//! the Hobby plan). Set `KEEP_EXPERIMENT=1` to keep everything and open the
+//! printed URL instead.
+//!
+//! **Needs:** the `otel` feature.
 //!
 //! On a Langfuse dataset, fetch it with `client.get_dataset(..)` and call
 //! `dataset.run_experiment(&tracer, task, options)`: runs with the same run
 //! name on the same dataset then share one experiment.
+//!
+//! **Docs:** <https://langfuse.com/docs/evaluation/experiments/experiments-via-sdk>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -47,6 +64,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = LangfuseClient::new(ClientConfig::from_env()?)?;
     let tracer = client.tracer(TracingOptions::from_env()?)?;
 
+    // Local items: an input, the expected output the evaluators compare
+    // against, and optional metadata.
     let data = vec![
         LocalExperimentItem::new(json!({"country": "France"}))
             .with_expected_output("Paris")
@@ -55,8 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         LocalExperimentItem::new(json!({"country": "Spain"})).with_expected_output("Madrid"),
     ];
 
-    // The task runs in the scope of the item's task span: the generation
-    // below becomes its child.
+    // The task returns the output for one item, or an error, which marks the
+    // item as failed without stopping the run. It runs in the scope of the
+    // item's task span: the generation below becomes its child.
     let task = |item: ExperimentItem| {
         let tracer = tracer.clone();
         async move {
@@ -77,6 +97,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Item evaluators see the input, the output and the expected output of
+    // one item and return a score: boolean, numeric or categorical, with an
+    // optional comment.
     let exact_match = evaluator("exact_match", |args: EvaluatorInput| async move {
         let expected = args.expected_output.as_ref().and_then(|v| v.as_str());
         let matches = expected.is_some_and(|e| Some(e) == args.output.as_str());
@@ -95,6 +118,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .count();
         Evaluation::numeric("brevity", if words <= 2 { 1.0 } else { 0.0 })
     });
+    // Runs after the item evaluators, with their results (booleans count as
+    // 1.0 and 0.0): a weighted sum here.
     let overall = composite_evaluator("overall", |args: CompositeEvaluatorInput| async move {
         let score = |name: &str| {
             args.evaluations
@@ -108,6 +133,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             0.8 * score("exact_match") + 0.2 * score("brevity"),
         )
     });
+    // Runs once, after all items, with every item result. Returning `None`
+    // creates no score.
     let accuracy = run_evaluator("accuracy", |run: RunEvaluatorInput| async move {
         let total = run.item_results.len();
         let correct = run
@@ -129,10 +156,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_evaluator(brevity)
         .with_composite_evaluator(overall)
         .with_run_evaluator(accuracy);
+    // Runs every item (concurrently, up to the options' limit), then the run
+    // evaluators, and flushes the traces and scores. The report lists every
+    // item when `format` gets `true`.
     let result = tracer.run_experiment(data, task, options).await?;
     println!("{}", result.format(true));
 
-    // Langfuse builds the experiment from the traces once they are ingested.
+    // There is no API call that creates an experiment: Langfuse derives it
+    // from the ingested traces, which takes a few seconds.
     let listed = wait_for_experiment(&client, &result.experiment_id, true).await?;
     println!(
         "\nLangfuse lists the experiment: {}",
@@ -185,6 +216,12 @@ async fn wait_for_experiment(
 
 /// Delete the scores of the run (item scores by trace, run scores by
 /// experiment), then its traces.
+///
+/// Deleting a trace also removes the scores attached to it, but
+/// asynchronously (usually within 15 minutes). The scores are deleted one by
+/// one here so that they are gone right away, and because the run score is
+/// attached to the experiment, not to a trace. To spend fewer delete
+/// requests, delete only the run score and the traces.
 async fn cleanup(client: &LangfuseClient, result: &ExperimentResult) -> Result<(), LangfuseError> {
     let trace_ids: Vec<String> = result
         .item_results

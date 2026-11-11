@@ -126,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Examples
 
-The examples are in the `examples/` directory, except `rig_tracing` and `bedrock_tracing`, which live in the unpublished `integration-tests/` workspace member (so that the crate's own builds never compile rig or the AWS SDK; run them with `-p langfuse-rust-sdk-integration-tests`). They auto-load a `.env` file via `dotenvy`, so you can either export environment variables or create a `.env` file:
+The examples are in the `examples/` directory, except `rig_tracing` and `bedrock_tracing`, which live in the unpublished `integration-tests/` workspace member (so that the crate's own builds never compile rig or the AWS SDK; run them with `-p langfuse-rust-sdk-integration-tests`). They auto-load a `.env` file via `dotenvy`, so you can either export environment variables or create a `.env` file. [`examples/EXAMPLES.md`](examples/EXAMPLES.md) describes each example in detail: what it writes and leaves behind, the features and variables it needs, the calls it makes and a sample of its output. The same guide is on docs.rs as the [`examples`](https://docs.rs/langfuse-rust-sdk/latest/langfuse_rust_sdk/examples/index.html) module, where the items of the API reference also show the snippets of the examples that use them.
 
 ```sh
 # Option 1: .env file (recommended)

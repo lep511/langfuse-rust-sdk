@@ -1,11 +1,23 @@
-//! Score observations already stored in Langfuse with `run_batched_evaluation`.
+//! Score observations that are already stored in Langfuse with
+//! `run_batched_evaluation`, the counterpart of the Python SDK method of the
+//! same name: it pages through the observations matching a filter, runs your
+//! evaluators on each one, and writes the results back as scores.
 //!
-//! Writes data, then deletes it: the example first ingests one trace with
-//! three generations (through the OTLP endpoint, no `otel` feature needed),
-//! waits until they can be queried, evaluates them (one evaluator fails on
-//! purpose for the empty answer), prints the summary, and deletes the scores
-//! and the trace. Point the filter (and its `startTime` window) at your own
-//! observations to evaluate them.
+//! To have something to evaluate, the example first ingests one trace with
+//! three generations (through the OTLP endpoint, no `otel` feature needed)
+//! and waits until they can be queried. It then evaluates them (one evaluator
+//! fails on purpose for the empty answer), prints the summary, and deletes
+//! the scores and the trace. Point the filter (and its `startTime` window) at
+//! your own observations to evaluate them.
+//!
+//! **Writes data**, then deletes it: one trace and eight scores. The cleanup
+//! makes nine delete requests, which count against the trace-data-deletion
+//! rate limit of Langfuse Cloud (50 requests per day on the Hobby plan).
+//! Expect the run to take about a minute, most of it waiting for ingestion.
+//!
+//! **Docs:** <https://langfuse.com/docs/evaluation/overview>; the Python
+//! method is described in
+//! <https://langfuse.com/docs/observability/sdk/upgrade-path/python-v4-to-v5>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -27,6 +39,7 @@ use langfuse_rust_sdk::models::observations::ObservationV2;
 use langfuse_rust_sdk::{ClientConfig, LangfuseClient};
 use serde_json::json;
 
+/// (question, answer) of the three generations; the last answer is empty.
 const ANSWERS: [(&str, &str); 3] = [
     ("What is Rust?", "A systems programming language."),
     (
@@ -51,13 +64,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Ingested trace {trace_id}; waiting until its observations can be queried...");
     wait_for_observations(&client, &trace_id, &since, ANSWERS.len()).await?;
 
-    // The mapper picks what the evaluators see; `io` fields hold the raw strings.
+    // The mapper turns a stored observation into what the evaluators see.
+    // The v2 API returns `input` and `output` as raw strings, so structured
+    // payloads would have to be parsed here.
     let mapper = |observation: ObservationV2| async move {
         EvaluatorInput::new(
             observation.input.unwrap_or_default(),
             observation.output.unwrap_or_default(),
         )
     };
+    // Evaluators are the same as in experiments (see `run_experiment`): they
+    // return an `Evaluation`, or an error, which is counted as a failed run
+    // of that evaluator and creates no score.
     let not_empty = evaluator("not_empty", |args: EvaluatorInput| async move {
         let text = args.output.as_str().unwrap_or_default().trim().to_owned();
         Evaluation::boolean("not_empty", !text.is_empty())
@@ -75,6 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(Evaluation::numeric("conciseness", 1.0 / words as f64)
             .with_comment(format!("{words} words")))
     });
+    // Combines the evaluations of one observation into one more score.
     let quality = composite_evaluator("quality", |args: CompositeEvaluatorInput| async move {
         let passed = args
             .evaluations
@@ -83,12 +102,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Evaluation::boolean("quality", passed)
     });
 
-    // The run sends no `fromStartTime`: its time window is a `startTime`
-    // condition in the filter.
+    // Which observations to evaluate: a v2 filter, a JSON array of
+    // conditions. The run sends no `fromStartTime`: its time window is the
+    // `startTime` condition of the filter, which keeps the query bounded.
     let filter = json!([
         {"type": "string", "column": "traceId", "operator": "=", "value": trace_id},
         {"type": "datetime", "column": "startTime", "operator": ">=", "value": since},
     ]);
+    // `max_items` caps the run; a run that stops there (or on an error)
+    // returns a resume token to continue with `with_resume_from`. The
+    // metadata is added to every score. `verbose` logs the progress.
     let options = BatchEvaluationOptions::new(mapper)
         .with_evaluator(not_empty)
         .with_evaluator(conciseness)
@@ -107,7 +130,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  {observation_id}: {}", scores.join(", "));
     }
 
-    // Clean up: scores are ingested asynchronously, so wait for all of them.
+    // Clean up: scores are ingested asynchronously, so wait until all of
+    // them can be listed. Deleting the trace would remove its scores as well,
+    // but asynchronously (usually within 15 minutes); deleting them one by one
+    // makes them disappear right away, at the price of one delete request
+    // per score.
     let expected: usize = result.item_evaluations.values().map(Vec::len).sum();
     let params = ListScoresParams {
         trace_id: Some(trace_id.clone()),
@@ -130,7 +157,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// One trace with a generation per question.
+/// Ingest one trace with a generation per question, as hand-built OTLP spans
+/// (see the `otel_ingestion` example for the attributes).
 async fn ingest_generations(
     client: &LangfuseClient,
     trace_id: &str,
@@ -180,7 +208,8 @@ async fn ingest_generations(
 }
 
 /// Poll the v2 observations API until the trace has `count` observations
-/// that started at or after `since`.
+/// that started at or after `since`. Ingestion is asynchronous: new data can
+/// usually be queried after 15 to 30 seconds.
 async fn wait_for_observations(
     client: &LangfuseClient,
     trace_id: &str,

@@ -22,12 +22,12 @@ members = ["macros", "integration-tests"]
 # Shared by langfuse-rust-sdk and langfuse-rust-sdk-macros: bump it together with the
 # `=x.y.z` pin on langfuse-rust-sdk-macros below.
 [workspace.package]
-version = "0.11.2"
+version = "0.11.3"
 
 [workspace.dependencies]
 # `#[observe]` expands to calls into the hidden `otel::__observe` runtime, so both crates
 # must have the same version.
-langfuse-rust-sdk-macros = { version = "=0.11.2", path = "macros" }
+langfuse-rust-sdk-macros = { version = "=0.11.3", path = "macros" }
 
 [dependencies]
 langfuse-rust-sdk-macros = { workspace = true, optional = true }
@@ -68,6 +68,11 @@ aws-smithy-types = { version = "1.9", default-features = false, optional = true 
 [package.metadata.docs.rs]
 # Document the `otel` and `unstable` modules too.
 all-features = true
+# Show the call sites found in `examples/` under the items they use ("Examples
+# found in repository"). The flag is unstable; docs.rs builds with nightly.
+# Check locally with:
+#   RUSTC_BOOTSTRAP=1 cargo doc --no-deps --all-features -Zunstable-options -Zrustdoc-scrape-examples
+cargo-args = ["-Zunstable-options", "-Zrustdoc-scrape-examples"]
 
 [features]
 unstable = []
@@ -94,6 +99,13 @@ dotenvy = "0.15"
 wiremock = "0.6"
 futures = "0.3.34"
 trybuild = "1"
+
+# The examples need the dev-dependencies, which `cargo doc` does not build on
+# its own: opting in on one example makes rustdoc scrape all of them (see
+# `cargo-args` in `[package.metadata.docs.rs]`). Stable Cargo ignores the key.
+[[example]]
+name = "health_check"
+doc-scrape-examples = true
 
 [[example]]
 name = "dashboards"

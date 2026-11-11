@@ -1,9 +1,21 @@
-//! List the project's LLM connections (secrets are never returned), and the
-//! organization-level ones when the key allows it.
+//! List the project's LLM connections, and the organization-level ones when
+//! the key allows it. An LLM connection is a provider API key stored in
+//! Langfuse, which the Playground and LLM-as-a-judge evaluators use to call
+//! models; it has no effect on the cost calculation of ingested traces. The
+//! API never returns the secrets, only a masked key and the names of extra
+//! headers.
 //!
-//! Read-only by default. Set `EXAMPLE_LLM_API_KEY` to also upsert a temporary
-//! OpenAI-compatible connection named `rust-sdk-example`, show it, and delete it.
-//! Optionally set `EXAMPLE_LLM_BASE_URL` for a custom gateway.
+//! **Read-only** by default. Set `EXAMPLE_LLM_API_KEY` to also upsert a
+//! temporary OpenAI-compatible connection named `rust-sdk-example`, show it,
+//! and delete it again (**writes data**, then cleans up). The upsert does not
+//! check the key with the provider, so a dummy value is enough to try it.
+//! Optionally set `EXAMPLE_LLM_BASE_URL` to the base URL of an
+//! OpenAI-compatible server.
+//!
+//! Organization-level connections need an organization-scoped API key and are
+//! an Enterprise feature; with a project key that part is skipped.
+//!
+//! **Docs:** <https://langfuse.com/docs/administration/llm-connection>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -22,6 +34,7 @@ fn build_client() -> Result<LangfuseClient, Box<dyn std::error::Error>> {
     Ok(LangfuseClient::new(ClientConfig::from_env()?)?)
 }
 
+/// One line per connection; the secret key is not part of the response.
 fn print_connection(conn: &LlmConnection) {
     println!(
         "  - {} (adapter {}, base URL {}, default models: {})",
@@ -43,7 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    // Project-level connections, all pages.
+    // Project-level connections: walk through all pages by hand
+    // (`llm_connections.list_pages` does the same lazily).
     let mut page = 1;
     let mut connections = Vec::new();
     loop {
@@ -63,7 +77,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Project LLM connections: {}", connections.len());
     connections.iter().for_each(print_connection);
 
-    // Organization-level connections need an organization-scoped API key.
+    // Organization-level connections are shared by the projects of the
+    // organization. They need an organization-scoped API key: a project key
+    // is answered with 401 or 403, which is not a failure of this example.
     match client
         .llm_connections
         .list_organization(&PageParams::default())
@@ -79,7 +95,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => return Err(e.into()),
     }
 
-    // Optional write path: upsert a temporary connection and delete it again.
+    // Optional write path. Connections are upserted on the provider name:
+    // a second call with the same `provider` updates the connection instead
+    // of adding one. The adapter is the API format the provider speaks.
     let Ok(secret) = std::env::var("EXAMPLE_LLM_API_KEY") else {
         println!("\nSet EXAMPLE_LLM_API_KEY to also try upsert + delete.");
         return Ok(());
@@ -96,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nUpserted connection:");
     print_connection(&created);
 
+    // Deleting a connection pauses the evaluators that depend on it.
     let deleted = client.llm_connections.delete(&created.id).await?;
     println!("Deleted: {}", deleted.message);
 

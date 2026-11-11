@@ -106,6 +106,14 @@
 //! }
 //! # }
 //! ```
+//!
+//! # Examples
+//!
+//! The repository holds runnable examples for every area of the SDK. The
+//! [`examples`] page describes each one: what it shows, what it writes to the
+//! project, the features and variables it needs, and a sample of its output.
+//! On docs.rs, the calls they make are also shown under the items they use
+//! ("Examples found in repository").
 #![warn(missing_docs)]
 // Documented by its inner `//!` docs: outer docs here would be merged with
 // them and resolved in this module's scope.
@@ -114,6 +122,13 @@ pub mod api;
 pub mod config;
 /// Error types returned by every SDK method.
 pub mod error;
+/// Guide to the runnable examples in the repository's `examples/` directory.
+///
+/// This module has no items: it exists only when the documentation is built.
+///
+#[doc = include_str!("../examples/EXAMPLES.md")]
+#[cfg(doc)]
+pub mod examples {}
 // Documented by its own `//!` docs, so intra-doc links resolve inside the module.
 pub mod gateway;
 /// Low-level HTTP transport shared by all API clients.

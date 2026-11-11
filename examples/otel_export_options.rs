@@ -1,12 +1,25 @@
-//! Export options of the tracer, end to end: gzip-compressed exports (the
-//! default), a tracer provider of your own that also feeds another exporter
-//! (through `LangfuseSpanProcessor` and `LangfuseTracer::with_provider`), and
-//! `mask_otel_spans` redacting attributes before they leave the process. Waits
-//! until Langfuse stores the trace, checks the redaction, then deletes the
-//! trace.
+//! Export options of the tracer, end to end:
 //!
-//! Writes one trace with three observations, deleted at the end. Set
-//! `KEEP_TRACE=1` to keep it and open the printed URL instead.
+//! - gzip-compressed exports (the default; `LANGFUSE_OTEL_COMPRESSION=none`
+//!   turns it off for proxies that reject compressed requests);
+//! - a tracer provider of your own that also feeds another exporter, through
+//!   `LangfuseSpanProcessor` and `LangfuseTracer::with_provider`;
+//! - `mask_otel_spans`, which redacts span attributes before they leave the
+//!   process, including those of spans created by other instrumentation.
+//!
+//! The example then waits until Langfuse has stored the trace, checks through
+//! the API that no secret arrived, and deletes the trace. It exits with an
+//! error if the check fails.
+//!
+//! **Writes data:** one trace with three observations, deleted at the end
+//! (one request of the trace-data-deletion rate limit; Langfuse removes the
+//! data asynchronously, usually within 15 minutes). Set `KEEP_TRACE=1` to keep
+//! it and open the printed URL instead.
+//!
+//! **Needs:** the `otel` feature.
+//!
+//! **Docs:** <https://langfuse.com/docs/observability/features/masking>,
+//! <https://langfuse.com/docs/observability/sdk/advanced-features>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -54,11 +67,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Gzip is the default (and `from_env` reads LANGFUSE_OTEL_COMPRESSION);
     // it is set here only to make the example explicit.
+    //
+    // The mask runs in the export task on each batch, after media upload and
+    // right before the request is built, so it sees the final attributes of
+    // every span. If it panics the whole batch is dropped: nothing unmasked
+    // is ever sent.
     let options = TracingOptions::from_env()?
         .with_compression(Compression::Gzip)
         .with_mask_otel_spans(|spans| {
             for span in spans {
-                // Metadata values are JSON-encoded attributes.
+                // Observation metadata is flattened to one attribute per key,
+                // `langfuse.observation.metadata.<key>`, with a JSON-encoded
+                // value: the replacement is a JSON string too.
                 if span
                     .remove_attribute("langfuse.observation.metadata.api_key")
                     .is_some()
@@ -68,6 +88,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "\"[redacted]\"",
                     ));
                 }
+                // An attribute of a span this SDK did not create: drop it and
+                // leave a marker instead.
                 if span
                     .remove_attribute("http.request.header.authorization")
                     .is_some()
@@ -76,6 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         });
+    // Your own provider: add the Langfuse processor next to whatever else
+    // you export to. `client.tracer(options)` is the shortcut that builds a
+    // provider with only the Langfuse processor.
     let processor = LangfuseSpanProcessor::new(&client, options)?;
     let provider = SdkTracerProvider::builder()
         .with_span_processor(processor.clone())
@@ -100,7 +125,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .set_output(&json!({"plan": "pro"}));
             lookup.end();
 
-            // A span of other instrumentation on the same provider.
+            // A span of other instrumentation on the same provider. Langfuse
+            // exports it because it carries a `gen_ai.*` attribute; spans of
+            // unrelated libraries are filtered out by default.
             let mut http = provider.tracer("my-http-client").start("POST /v1/chat");
             http.set_attribute(KeyValue::new("gen_ai.system", "openai"));
             http.set_attribute(KeyValue::new(
@@ -113,6 +140,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     request.set_output("You are on the pro plan.");
     request.end();
 
+    // `with_provider` leaves the provider running on `tracer.shutdown()`,
+    // because it is yours: shut it down yourself.
     tracer.shutdown().await;
     let _ = provider.shutdown();
 

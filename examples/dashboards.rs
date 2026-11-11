@@ -1,5 +1,5 @@
-//! Build a dashboard with the unstable Dashboards API, pause so you can look at
-//! it in the Langfuse UI, then delete it.
+//! Build a custom dashboard with the unstable Dashboards API, pause so you
+//! can look at it in the Langfuse UI, then delete it.
 //!
 //! The example creates three widgets (observations over time, observations by
 //! name, total cost) and a dashboard that places them on the grid: one tile at
@@ -8,6 +8,7 @@
 //!
 //! - in a terminal: until you press Enter;
 //! - with `DASHBOARD_PAUSE_SECS=<n>`: for `n` seconds (for non-interactive runs);
+//! - otherwise (no terminal, variable unset): not at all;
 //! - Ctrl+C ends the pause early, and cleanup still runs.
 //!
 //! Then it deletes the dashboard (which removes its placements) and the
@@ -16,13 +17,19 @@
 //! Set `DASHBOARD_ENVIRONMENT=production` (or another name) to add a
 //! dashboard-level environment filter.
 //!
-//! **Writes data** (temporarily). Needs the `unstable` feature; the API may
-//! change without notice upstream.
+//! **Writes data**, then cleans up: three widgets and one dashboard, deleted
+//! at the end.
 //!
-//! The unstable endpoints are rate limited (30 requests per window when this
-//! example was written) and one run makes 13 of them. On HTTP 429 the SDK
-//! waits for `Retry-After` and retries, so back-to-back runs can stall for a
-//! few seconds.
+//! **Needs:** the `unstable` feature. The endpoints under
+//! `/api/public/unstable` may change while Langfuse finalizes the dashboard
+//! and widget contract.
+//!
+//! One run makes 14 requests, 13 of them to the unstable endpoints, which
+//! count against the general API rate limit of Langfuse Cloud (30 requests
+//! per minute on the Hobby plan). On HTTP 429 the SDK waits for `Retry-After`
+//! and retries, so back-to-back runs can stall for a few seconds.
+//!
+//! **Docs:** <https://langfuse.com/docs/metrics/features/custom-dashboards>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -64,6 +71,10 @@ struct Created {
     dashboard_id: Option<String>,
 }
 
+/// A widget is a saved metrics query plus a chart type: a view, dimensions
+/// to group by and metrics (a measure with an aggregation), like a query of
+/// the Metrics API (see the `metrics_query` example), but without a time
+/// range of its own.
 fn widget_request(
     name: &str,
     dimensions: &[&str],
@@ -141,6 +152,7 @@ async fn build(client: &LangfuseClient, created: &mut Created) -> Result<String,
             Chart::Number,
         ),
     ];
+    // Widgets exist on their own and can be placed on several dashboards.
     for spec in &specs {
         let widget = client.unstable_dashboard_widgets.create(spec).await?;
         println!("Created widget '{}' ({:?})", widget.name, widget.chart_type);
@@ -148,6 +160,7 @@ async fn build(client: &LangfuseClient, created: &mut Created) -> Result<String,
     }
     let [over_time, by_name, cost] = [0, 1, 2].map(|i| created.widgets[i].id.clone());
 
+    // A dashboard-level filter applies to every widget placed on it.
     let filters = std::env::var("DASHBOARD_ENVIRONMENT").ok().map(|env| {
         vec![DashboardWidgetFilter {
             column: "environment".into(),

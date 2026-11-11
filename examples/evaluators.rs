@@ -1,12 +1,24 @@
-//! Set up LLM-as-a-judge evaluation: create an evaluator, attach it to a
-//! **disabled** evaluation rule for production generations, inspect both, and
-//! delete them again.
+//! Set up LLM-as-a-judge evaluation through the public API: create an
+//! evaluator, attach it to a **disabled** evaluation rule for production
+//! generations, inspect both, and delete them again.
 //!
-//! **Writes data**, then cleans up. The rule is created with `enabled: false`,
-//! so no evaluation runs and no LLM cost is incurred.
+//! - An **evaluator** defines *how* to score: the judge prompt with its
+//!   `{{variables}}`, the output definition (numeric, boolean or categorical)
+//!   and optionally a model.
+//! - An **evaluation rule** defines *which* observations are scored: filters,
+//!   a sampling rate and one or more evaluators with their variable mappings.
 //!
-//! The evaluator uses the project's default evaluation model. If the project has
-//! none (and no LLM connection), the API answers 412 and the example says so.
+//! **Writes data**, then cleans up: the rule and the evaluator are deleted at
+//! the end, also when a step in between fails. The rule is created with
+//! `enabled: false`, so no evaluation runs and no LLM cost is incurred.
+//!
+//! The evaluator uses the project's default evaluation model. In a project
+//! without a usable model (no LLM connection) Langfuse Cloud 4.78 still
+//! creates the evaluator, with the status `paused`; should the API answer 412
+//! Precondition Failed instead, which the spec also allows, the example
+//! prints the reason and stops.
+//!
+//! **Docs:** <https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge>
 //!
 //! ```sh
 //! LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
@@ -41,6 +53,9 @@ fn message(role: EvaluatorChatMessageRole, content: &str) -> EvaluatorChatMessag
     }
 }
 
+/// Where a prompt variable gets its value: `{{input}}` from the input of the
+/// evaluated observation, `{{output}}` from its output. `json_path` could
+/// select a part of that value.
 fn mapping(variable: &str) -> Option<PromptVariableMappingInput> {
     let source = match variable {
         "input" => PromptVariableMappingSource::Input,
@@ -59,7 +74,11 @@ async fn main() -> Result<(), BoxError> {
     let _ = dotenvy::dotenv();
     let client = build_client()?;
 
-    // 1. Evaluator: how to score. Numeric score between 0 and 1.
+    // 1. Evaluator: how to score. A chat prompt for the judge, and a numeric
+    //    score between 0 and 1 with instructions for the value and for the
+    //    reasoning returned with the score. `model_config: None`
+    //    selects the project's default evaluation model. Names are not unique:
+    //    every create makes a new evaluator at version 1.
     let created = client
         .evaluators
         .create(&CreateEvaluatorRequest::LlmAsJudge {
@@ -89,6 +108,8 @@ async fn main() -> Result<(), BoxError> {
         .await;
     let evaluator = match created {
         Ok(evaluator) => evaluator,
+        // 412: a precondition of the project is not met. The body follows the
+        // `PublicApiError` schema, which carries the reason.
         Err(err @ LangfuseError::PreconditionFailed { .. }) => {
             let reason = PublicApiError::from_error(&err)
                 .map(|e| e.message)
@@ -99,10 +120,13 @@ async fn main() -> Result<(), BoxError> {
         }
         Err(err) => return Err(err.into()),
     };
+    // `Paused` here means Langfuse will not run the evaluator until its
+    // problem (typically the missing model) is fixed.
     println!(
         "Created evaluator {} v{} ({:?})",
         evaluator.base.name, evaluator.base.version, evaluator.base.status
     );
+    // The server extracts the variables of the prompt.
     let variables = match &evaluator.definition {
         EvaluatorDefinition::LlmAsJudge { variables, .. } => variables.clone(),
         EvaluatorDefinition::Code { .. } => Vec::new(),
@@ -112,7 +136,9 @@ async fn main() -> Result<(), BoxError> {
     // Run the rest, then always clean up what was created.
     let mut rule_id: Option<String> = None;
     let outcome = async {
-        // 2. Evaluation rule: what to score. Disabled, so nothing runs.
+        // 2. Evaluation rule: what to score. Generations of the `production`
+        //    environment, 10 % of them. Created disabled, so nothing runs.
+        //    An enabled rule evaluates live observations as they arrive.
         let rule = client
             .evaluation_rules
             .create(&CreateEvaluationRuleRequest {
@@ -151,7 +177,10 @@ async fn main() -> Result<(), BoxError> {
             );
         }
 
-        // 3. Metadata-only update: does not create a new evaluator version.
+        // 3. Metadata-only update (name, description): does not create a new
+        //    evaluator version, unlike a change of the prompt or the output
+        //    definition. `Some(Some(..))` sets the description, `Some(None)`
+        //    would clear it and `None` leaves it alone.
         let updated = client
             .evaluators
             .update(
@@ -188,7 +217,7 @@ async fn main() -> Result<(), BoxError> {
     }
     .await;
 
-    // 4. Clean up: the rule first, then the evaluator.
+    // 4. Clean up: the rule first, then the evaluator it references.
     if let Some(id) = rule_id {
         client.evaluation_rules.delete(&id).await?;
         println!("Deleted rule {id}");
