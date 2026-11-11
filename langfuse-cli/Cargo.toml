@@ -1,0 +1,63 @@
+[package]
+name = "langfuse-rust-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Command-line client for the Langfuse API, built on langfuse-rust-sdk"
+license = "MIT"
+repository = "https://github.com/lep511/langfuse-rust-sdk"
+readme = "README.md"
+keywords = ["langfuse", "cli", "llm", "observability", "prompts"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "langfuse"
+path = "src/main.rs"
+
+# Its own workspace root: this crate lives inside the SDK repository but is not
+# a member of the SDK workspace, and depends on the SDK release from crates.io.
+[workspace]
+
+[features]
+default = ["unstable"]
+# The /api/public/unstable/* operations (dashboards, widgets, topics).
+unstable = ["langfuse-rust-sdk/unstable"]
+
+[dependencies]
+base64 = "0.22"
+chrono = "0.4.45"
+clap = { version = "4.6", features = ["derive", "wrap_help", "string"] }
+clap_complete = "4.6"
+comfy-table = { version = "8", default-features = false }
+dotenvy = "0.15"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+langfuse-rust-sdk = "0.11.3"
+percent-encoding = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_norway = "0.9"
+serde_urlencoded = "0.7"
+sha2 = "0.11"
+terminal_size = "0.4"
+tokio = { version = "1", features = ["rt", "macros"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# No debuginfo in development builds (see the SDK's docs/build-footprint.md).
+[profile.dev]
+debug = false
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+tempfile = "3.27.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+wiremock = "0.6"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"

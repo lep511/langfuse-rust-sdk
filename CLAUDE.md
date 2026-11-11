@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Rust SDK for the Langfuse LLM observability API: async on `reqwest` + `tokio`, Rust 1.99+, edition 2024. It implements all 120 operations of `api/openapi.yml`; the 21 `/api/public/unstable/*` ones are behind the `unstable` feature. Workspace members: `macros/` (`langfuse-rust-sdk-macros`, the `#[observe]` proc-macro, published first and pinned with `=x.y.z`) and the unpublished `integration-tests/`.
+Rust SDK for the Langfuse LLM observability API: async on `reqwest` + `tokio`, Rust 1.99+, edition 2024. It implements all 120 operations of `api/openapi.yml`; the 21 `/api/public/unstable/*` ones are behind the `unstable` feature. Workspace members: `macros/` (`langfuse-rust-sdk-macros`, the `#[observe]` proc-macro, published first and pinned with `=x.y.z`) and the unpublished `integration-tests/`. `langfuse-cli/` is not a member: it is the standalone `langfuse-rust-cli` crate (binary `langfuse`, its own `[workspace]` and `Cargo.lock`) that depends on the SDK release from crates.io; its own `CLAUDE.md` describes it, and the commands below do not build it.
 
 Features: `otel` (native OpenTelemetry tracing in `src/otel/`, and `run_experiment`); on top of it `macros` (`#[observe]`), `tracing-layer` (bridge from the `tracing` crate), `openai` (traced `async-openai` 0.43) and `bedrock` (traced `aws-sdk-bedrockruntime` Converse calls); `blocking` (blocking client); `unstable`. Datasets, evaluators, batch evaluation and the AI Gateway client need no feature.
 
