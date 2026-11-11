@@ -19,7 +19,20 @@ Node.js) and starts in milliseconds.
 
 ## Install
 
-From this repository:
+### Prebuilt binary (Linux, no Rust needed)
+
+[`dist/`](dist/) holds static binaries for Linux x86_64 and ARM64:
+
+```sh
+arch="$(uname -m)"   # x86_64 or aarch64
+curl -fsSLo langfuse "https://github.com/lep511/langfuse-rust-sdk/raw/main/langfuse-cli/dist/langfuse-$arch-unknown-linux-musl"
+chmod +x langfuse && sudo mv langfuse /usr/local/bin/
+```
+
+[`dist/README.md`](dist/README.md) also shows how to verify the checksum and
+how to rebuild the binaries with `scripts/build-dist.sh`.
+
+### From source
 
 ```sh
 cargo install --path langfuse-cli          # builds the `langfuse` binary

@@ -9,6 +9,8 @@ repository = "https://github.com/lep511/langfuse-rust-sdk"
 readme = "README.md"
 keywords = ["langfuse", "cli", "llm", "observability", "prompts"]
 categories = ["command-line-utilities", "development-tools"]
+# Prebuilt binaries and the script that builds them stay out of the crate.
+exclude = ["dist/", "scripts/"]
 
 [[bin]]
 name = "langfuse"

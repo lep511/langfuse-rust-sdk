@@ -16,7 +16,10 @@ cargo test --lib                             # in-crate unit tests
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --all-targets --no-default-features -- -D warnings
 cargo build --release
+scripts/build-dist.sh                        # static Linux binaries (x86_64, ARM64) into dist/, with SHA256SUMS and VERSION
 ```
+
+`dist/` is committed so the binaries can be downloaded from GitHub (`dist/README.md`); every committed rebuild adds about 11 MB to the history, so rebuild it only for a new version. `scripts/build-dist.sh` needs zig and `cargo-zigbuild` (`ring` compiles C for musl), and remaps local paths out of the binaries. `dist/` and `scripts/` are excluded from the crate package.
 
 ## Layout
 

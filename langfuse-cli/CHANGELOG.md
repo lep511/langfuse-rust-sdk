@@ -22,3 +22,5 @@ First version: a Rust port of the official Langfuse CLI (`@langfuse/cli`
 - **`langfuse skills install|update|push`** with the official lockfile format,
   manifest validation, atomic installs and Git-aware publishing.
 - **`langfuse get-skill`** and **`langfuse completions <shell>`**.
+- **Prebuilt binaries** in `dist/`: static Linux x86_64 and ARM64 binaries,
+  built by `scripts/build-dist.sh` (cargo-zigbuild), with `SHA256SUMS`.
