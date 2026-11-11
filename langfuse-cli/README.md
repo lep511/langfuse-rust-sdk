@@ -28,8 +28,18 @@ curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langf
 [`install.sh`](install.sh) picks the binary for the machine (x86_64 or ARM64)
 from [`dist/`](dist/), checks it against `SHA256SUMS`, and installs it in
 `/usr/local/bin` when that directory is writable, else in `~/.local/bin`.
-`sh -s -- --dir DIR` (or `LANGFUSE_INSTALL_DIR`) chooses the directory; pipe
-to `sudo sh` to install system-wide.
+
+The script is POSIX sh, so `| bash` works the same (as do `dash` and busybox
+`sh`, e.g. on Alpine); `| sh` also works where bash is not installed. Options
+go after `-s --` with either shell:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langfuse-cli/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langfuse-cli/install.sh | bash -s -- --dir ~/bin
+curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langfuse-cli/install.sh | sudo bash   # system-wide
+```
+
+`LANGFUSE_INSTALL_DIR` chooses the directory too, like `--dir`.
 
 Or download a binary by hand:
 

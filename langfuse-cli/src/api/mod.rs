@@ -307,8 +307,14 @@ resources! {
         ScoresV3(scores::V3Alias),
         /// Agent skills: versions, labels, tags and files (see also `langfuse skills`)
         Skills(skills::Command),
-        /// Traces (deletion; read traces through observations)
-        #[command(alias = "trace")]
+        /// Delete traces (reading traces is deprecated: use `observations`)
+        ///
+        /// Langfuse v4 is observations-first. The trace read endpoints, GET /api/public/traces and
+        /// GET /api/public/traces/{traceId}, are deprecated and no longer in the API spec, and
+        /// Langfuse Cloud stops serving them on 2026-11-16. Read traces through the Observations
+        /// API v2 (`langfuse api observations list`), which returns observations with their
+        /// traceId. Deleting traces is still supported.
+        #[command(alias = "trace", after_help = TRACES_AFTER_HELP)]
         Traces(traces::Command),
     }
     unstable {
@@ -328,6 +334,19 @@ resources! {
         UnstableTopics(unstable_topics::TopicsCommand),
     }
 }
+
+const TRACES_AFTER_HELP: &str = "\
+Instead of the deprecated trace reads (Observations API v2):
+  # One trace: its observations, with the trace name, tags and release
+  langfuse api observations list --trace-id <TRACE_ID> --from-start-time <DATE> \\
+    --fields core,basic,trace_context,io --all
+  # A list of traces: the root observations, about one per trace
+  langfuse api observations list --is-root-observation --from-start-time <DATE> \\
+    --fields core,basic,trace_context --format table --columns traceId,traceName,startTime
+  # Trace counts and costs: the Metrics API v2
+  langfuse api metrics get --help
+
+Migration guide: https://langfuse.com/faq/all/deprecated-api-migration#traces";
 
 const API_AFTER_HELP: &str = "\
 Discovery:

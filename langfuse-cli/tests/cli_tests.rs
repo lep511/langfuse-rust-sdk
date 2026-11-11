@@ -53,6 +53,37 @@ async fn action_help_names_the_http_call() {
 }
 
 #[tokio::test]
+async fn traces_help_points_to_observations() {
+    for args in [
+        vec!["api", "trace", "--help"],
+        vec!["api", "traces", "help"],
+        vec!["api", "traces", "-h"],
+    ] {
+        let output = run(&args).await;
+        assert_eq!(output.exit, Exit::Success, "{args:?}: {output:?}");
+        assert!(
+            output.stdout.contains("deprecated")
+                && output
+                    .stdout
+                    .contains("langfuse api observations list --trace-id")
+                && output
+                    .stdout
+                    .contains("https://langfuse.com/faq/all/deprecated-api-migration#traces"),
+            "{args:?}: {}",
+            output.stdout
+        );
+    }
+    let output = run(&["api", "help"]).await;
+    assert!(
+        output
+            .stdout
+            .contains("reading traces is deprecated: use `observations`"),
+        "{}",
+        output.stdout
+    );
+}
+
+#[tokio::test]
 async fn usage_errors_are_exit_2_with_suggestions() {
     let output = run(&["api", "promts", "list"]).await;
     assert_eq!(output.exit, Exit::Usage);

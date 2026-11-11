@@ -26,3 +26,7 @@ First version: a Rust port of the official Langfuse CLI (`@langfuse/cli`
   built by `scripts/build-dist.sh` (cargo-zigbuild), with `SHA256SUMS`.
 - **`install.sh`**: `curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langfuse-cli/install.sh | sh` installs the binary for the
   machine after checking its SHA-256.
+- **`api traces` help** says that reading traces is deprecated (the trace read
+  endpoints leave Langfuse Cloud on 2026-11-16). It shows the equivalent
+  `observations list` commands and links the migration guide; `delete` and
+  `delete-many` are unchanged.
