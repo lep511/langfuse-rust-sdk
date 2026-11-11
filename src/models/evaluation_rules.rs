@@ -151,7 +151,9 @@ pub enum EvaluationRuleFilter {
     },
 }
 
-/// The empty-string placeholder value required by `null` filters.
+/// The empty-string placeholder value of `null` filters. The API no longer
+/// requires it (a missing `value` defaults to `""`); the SDK keeps sending
+/// it, as servers older than that change expect.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EmptyValue;
 

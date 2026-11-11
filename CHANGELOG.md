@@ -4,6 +4,26 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.11.2] - 2026-11-11
+
+`api/openapi.yml` follows the spec served by Langfuse Cloud on 2026-11-11:
+no new operation, parameter, schema, property or enum value, so the SDK's
+behaviour is unchanged. `scripts/update_openapi.py` downloads the spec and
+logs what changed in `api/openapi-updates.txt`.
+
+### Changed
+
+- Docs of `ListObservationsParams::filter`, `from_start_time` and
+  `to_start_time`: a filter condition replaces the query parameter for the
+  same field and the parameters for other fields still apply. Bound the time
+  window with the parameters or with `startTime` conditions, not both: the
+  spec says a `startTime` condition replaces `fromStartTime` and
+  `toStartTime`, but Langfuse Cloud 4.78.0 applied both.
+- Docs of `EmptyValue` and `DashboardWidgetFilter`: the `value` of a `null`
+  filter is now optional in the API. `EvaluationRuleFilter::Null` keeps
+  sending `""`, which every server version accepts; a `DashboardWidgetFilter`
+  can leave `value` as `None`.
+
 ## [0.11.1] - 2026-11-11
 
 ### Changed

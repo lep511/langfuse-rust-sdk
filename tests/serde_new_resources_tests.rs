@@ -287,6 +287,30 @@ fn evaluation_rule_filter_all_variants() {
 }
 
 #[test]
+fn evaluation_rule_read_filter_null_value_is_optional() {
+    use langfuse_rust_sdk::models::evaluation_common::EvaluationRuleReadFilter;
+    use serde_json::json;
+    // The spec no longer requires `value` on `null` filters, so a stored one
+    // can come back without it, with JSON null or with the `""` placeholder.
+    let base = json!({"type": "null", "column": "parentObservationId", "operator": "is null"});
+    for (value, expected) in [
+        (None, None),
+        (Some(json!(null)), None),
+        (Some(json!("")), Some(json!(""))),
+    ] {
+        let mut wire = base.clone();
+        if let Some(value) = value {
+            wire["value"] = value;
+        }
+        let filter: EvaluationRuleReadFilter = serde_json::from_value(wire).unwrap();
+        assert_eq!(filter.r#type, "null");
+        assert_eq!(filter.operator, "is null");
+        assert_eq!(filter.value, expected);
+        assert_eq!(filter.key, None);
+    }
+}
+
+#[test]
 fn evaluation_rule_operator_values() {
     use langfuse_rust_sdk::models::evaluation_rules::*;
     assert_serialized(&[

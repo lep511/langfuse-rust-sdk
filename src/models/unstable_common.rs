@@ -42,7 +42,7 @@ pub struct UnstablePublicApiErrorDetails {
 /// `filter` query parameter of the Topics endpoints (JSON-encoded).
 ///
 /// `type` decides the operators and the `value` shape: `string`, `number`,
-/// `datetime`, `boolean`, `null` (value `""`), `stringOptions`, `arrayOptions`,
+/// `datetime`, `boolean`, `null` (no value, or `""`), `stringOptions`, `arrayOptions`,
 /// `categoryOptions`, `stringObject`, `numberObject`, `booleanObject`
 /// (the last four and `categoryOptions` require `key`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

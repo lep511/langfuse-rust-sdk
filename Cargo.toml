@@ -22,12 +22,12 @@ members = ["macros", "integration-tests"]
 # Shared by langfuse-rust-sdk and langfuse-rust-sdk-macros: bump it together with the
 # `=x.y.z` pin on langfuse-rust-sdk-macros below.
 [workspace.package]
-version = "0.11.1"
+version = "0.11.2"
 
 [workspace.dependencies]
 # `#[observe]` expands to calls into the hidden `otel::__observe` runtime, so both crates
 # must have the same version.
-langfuse-rust-sdk-macros = { version = "=0.11.1", path = "macros" }
+langfuse-rust-sdk-macros = { version = "=0.11.2", path = "macros" }
 
 [dependencies]
 langfuse-rust-sdk-macros = { workspace = true, optional = true }

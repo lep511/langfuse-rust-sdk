@@ -7,8 +7,8 @@ Features: `otel` (native OpenTelemetry tracing in `src/otel/`, and `run_experime
 ## Commands
 
 ```bash
-cargo test                                   # without optional features (550 tests)
-cargo test --all-features                    # every feature (725, includes the trybuild UI tests)
+cargo test                                   # without optional features (551 tests)
+cargo test --all-features                    # every feature (727, includes the trybuild UI tests)
 cargo test -p langfuse-rust-sdk-integration-tests --all-features  # rig + AWS SDK tests (8)
 cargo test --features otel --test otel_tests # one file; a gated file's first line names its feature
 cargo test --features openai --test gateway_tests  # gateway: some modules need otel or openai
@@ -17,6 +17,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 TRYBUILD=overwrite cargo test --features macros --test observe_ui_tests  # regenerate tests/ui/observe/*.stderr
 cargo run --example health_check             # examples hit the real API; features are in their [[example]]
 python3 scripts/generate_blocking.py         # regenerate src/blocking/api.rs
+python3 scripts/update_openapi.py            # download api/openapi.yml from Langfuse Cloud, report what is new and append the dated report to api/openapi-updates.txt (--dry-run: print only)
 ```
 
 Use this clippy invocation wherever a skill or tool suggests plain `cargo clippy`: without `--all-targets --all-features` it skips the tests, the examples and every feature-gated module. Each feature set builds its own copy of every test and example binary: iterate with `cargo test` or a single feature, run `--all-features` before committing. `cargo clean-own` (alias in `.cargo/config.toml`) drops the workspace crates' builds and keeps the dependencies. The `dev` profile has no debuginfo; `CARGO_PROFILE_DEV_DEBUG=line-tables-only` gives backtraces with lines, `full` a debugger (`docs/build-footprint.md`).

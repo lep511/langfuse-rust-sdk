@@ -124,6 +124,26 @@ fn widget_filter_roundtrip() {
     assert_eq!(serde_json::to_value(&filter).unwrap(), wire);
 }
 
+#[test]
+fn widget_null_filter_value_is_optional() {
+    use langfuse_rust_sdk::models::unstable_common::DashboardWidgetFilter;
+    // A `null` filter may omit `value` or send `""`; both shapes round-trip.
+    let omitted = json!({"column": "endTime", "operator": "is null", "type": "null"});
+    let filter: DashboardWidgetFilter = serde_json::from_value(omitted.clone()).unwrap();
+    assert_eq!(filter.value, None);
+    assert_eq!(serde_json::to_value(&filter).unwrap(), omitted);
+
+    let empty = json!({"column": "endTime", "operator": "is null", "type": "null", "value": ""});
+    let filter: DashboardWidgetFilter = serde_json::from_value(empty.clone()).unwrap();
+    assert_eq!(filter.value, Some(json!("")));
+    assert_eq!(serde_json::to_value(&filter).unwrap(), empty);
+
+    // An explicit JSON null reads as no value.
+    let null = json!({"column": "endTime", "operator": "is null", "type": "null", "value": null, "key": null});
+    let filter: DashboardWidgetFilter = serde_json::from_value(null).unwrap();
+    assert_eq!((filter.value, filter.key), (None, None));
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Dashboards
 // ═══════════════════════════════════════════════════════════════════════

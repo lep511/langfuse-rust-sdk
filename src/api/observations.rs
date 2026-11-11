@@ -39,12 +39,12 @@ pub struct ListObservationsParams {
     /// Start of the time window (inclusive): observations that started at or
     /// after this ISO 8601 datetime, e.g. `2026-11-01T00:00:00Z`. Langfuse v4
     /// recommends bounding every query: without it the API searches from
-    /// 2020-01-01. A `startTime` condition in [`filter`](Self::filter) takes
-    /// precedence over this parameter.
+    /// 2020-01-01. Do not combine it with a `startTime` condition in
+    /// [`filter`](Self::filter); see there.
     pub from_start_time: Option<String>,
     /// End of the time window (exclusive): observations that started before
-    /// this ISO 8601 datetime. A `startTime` condition in
-    /// [`filter`](Self::filter) takes precedence over this parameter.
+    /// this ISO 8601 datetime. Do not combine it with a `startTime` condition
+    /// in [`filter`](Self::filter); see there.
     pub to_start_time: Option<String>,
     pub version: Option<String>,
     /// Comma-separated field groups to include (e.g. `core,basic,usage`).
@@ -55,7 +55,17 @@ pub struct ListObservationsParams {
     /// `serde_json::from_str` when they hold JSON). Leave it `None`.
     pub parse_io_as_json: Option<bool>,
     pub is_root_observation: Option<bool>,
-    /// JSON-encoded array of filter conditions.
+    /// JSON-encoded array of filter conditions. A condition replaces the
+    /// parameter above for the same field (`name`, `user_id`, `type`,
+    /// `level`, `environment`, …); the parameters for other fields still
+    /// apply.
+    ///
+    /// Bound the time window either with
+    /// [`from_start_time`](Self::from_start_time) and
+    /// [`to_start_time`](Self::to_start_time) or with `startTime` conditions
+    /// here, not with both: the API documents that a `startTime` condition
+    /// replaces both parameters, while Langfuse Cloud 4.78.0 (checked on
+    /// 2026-11-11) applied the parameters and the conditions together.
     pub filter: Option<String>,
 }
 

@@ -1,0 +1,23 @@
+Langfuse OpenAPI spec updates
+
+Written by scripts/update_openapi.py: every run appends an entry with the
+differences between the spec it found and the one it downloaded, so each
+entry holds what changed since the entry before it. Newest entry last.
+
+==============================================================================
+2026-11-11 12:16:16 +0000
+Source: https://cloud.langfuse.com/generated/api/openapi.yml
+Target: api/openapi.yml
+==============================================================================
+
+Nothing new: no operation, parameter, schema, property or enum value was added.
+
+Changed (6)
+  ~ NullEvaluationRuleFilter.value: nullable (unset) -> true
+  ~ NullEvaluationRuleFilter: no longer required: value
+  ~ GET /api/public/v2/observations: description changed
+  ~ GET /api/public/v2/observations query parameter `filter`: description changed
+  ~ NullEvaluationRuleFilter.value: description changed
+  ~ unstableDashboardWidgetFilter: description changed
+
+Operations: 120 (21 unstable), schemas: 331
