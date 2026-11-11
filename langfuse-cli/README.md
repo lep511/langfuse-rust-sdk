@@ -21,7 +21,17 @@ Node.js) and starts in milliseconds.
 
 ### Prebuilt binary (Linux, no Rust needed)
 
-[`dist/`](dist/) holds static binaries for Linux x86_64 and ARM64:
+```sh
+curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langfuse-cli/install.sh | sh
+```
+
+[`install.sh`](install.sh) picks the binary for the machine (x86_64 or ARM64)
+from [`dist/`](dist/), checks it against `SHA256SUMS`, and installs it in
+`/usr/local/bin` when that directory is writable, else in `~/.local/bin`.
+`sh -s -- --dir DIR` (or `LANGFUSE_INSTALL_DIR`) chooses the directory; pipe
+to `sudo sh` to install system-wide.
+
+Or download a binary by hand:
 
 ```sh
 arch="$(uname -m)"   # x86_64 or aarch64

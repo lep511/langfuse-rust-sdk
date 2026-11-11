@@ -19,7 +19,7 @@ cargo build --release
 scripts/build-dist.sh                        # static Linux binaries (x86_64, ARM64) into dist/, with SHA256SUMS and VERSION
 ```
 
-`dist/` is committed so the binaries can be downloaded from GitHub (`dist/README.md`); every committed rebuild adds about 11 MB to the history, so rebuild it only for a new version. `scripts/build-dist.sh` needs zig and `cargo-zigbuild` (`ring` compiles C for musl), and remaps local paths out of the binaries. `dist/` and `scripts/` are excluded from the crate package.
+`dist/` is committed so the binaries can be downloaded from GitHub (`dist/README.md`); every committed rebuild adds about 11 MB to the history, so rebuild it only for a new version. `scripts/build-dist.sh` needs zig and `cargo-zigbuild` (`ring` compiles C for musl), and remaps local paths out of the binaries. `install.sh` (POSIX sh, run as `curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langfuse-cli/install.sh | sh`) downloads the binary for the machine from `dist/` on main, verifies it against `SHA256SUMS` and installs it; `LANGFUSE_CLI_BASE_URL=file://$PWD/dist sh install.sh --dir /tmp/x` tests it locally. `dist/`, `scripts/` and `install.sh` are excluded from the crate package.
 
 ## Layout
 

@@ -12,7 +12,16 @@ were built from.
 
 ## Download
 
-Pick the file that matches `uname -m` (`x86_64` or `aarch64`):
+With the installer, which picks the right file and verifies its checksum:
+
+```sh
+# Installs in /usr/local/bin if writable, else in ~/.local/bin:
+curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langfuse-cli/install.sh | sh
+# Or in another directory:
+curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langfuse-cli/install.sh | sh -s -- --dir ~/bin
+```
+
+By hand, pick the file that matches `uname -m` (`x86_64` or `aarch64`):
 
 ```sh
 arch="$(uname -m)"   # x86_64 or aarch64

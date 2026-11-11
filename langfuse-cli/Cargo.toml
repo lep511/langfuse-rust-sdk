@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["langfuse", "cli", "llm", "observability", "prompts"]
 categories = ["command-line-utilities", "development-tools"]
 # Prebuilt binaries and the script that builds them stay out of the crate.
-exclude = ["dist/", "scripts/"]
+exclude = ["dist/", "scripts/", "install.sh"]
 
 [[bin]]
 name = "langfuse"

@@ -24,3 +24,5 @@ First version: a Rust port of the official Langfuse CLI (`@langfuse/cli`
 - **`langfuse get-skill`** and **`langfuse completions <shell>`**.
 - **Prebuilt binaries** in `dist/`: static Linux x86_64 and ARM64 binaries,
   built by `scripts/build-dist.sh` (cargo-zigbuild), with `SHA256SUMS`.
+- **`install.sh`**: `curl -fsSL https://raw.githubusercontent.com/lep511/langfuse-rust-sdk/main/langfuse-cli/install.sh | sh` installs the binary for the
+  machine after checking its SHA-256.
