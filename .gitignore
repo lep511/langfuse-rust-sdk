@@ -1,4 +1,5 @@
 /target
+/labs
 Cargo.lock
 
 # Environment variables
