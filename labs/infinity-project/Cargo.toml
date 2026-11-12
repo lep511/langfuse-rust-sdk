@@ -1,0 +1,23 @@
+[package]
+name = "infinity-project"
+edition = "2024"
+version = "0.1.0"
+
+# Standalone project: keeps it out of the langfuse-sdk workspace in ../../Cargo.toml.
+[workspace]
+
+[dependencies]
+async-trait = "0.1.92"
+dotenvy = "0.15.7"
+futures-core = "0.3.34"
+infinity-agent-core = "0.2.0"
+infinity-provider-bedrock = "0.2.0"
+infinity-provider-protocol = "0.2.0"
+langfuse-rust-sdk = { version = "0.11.3", features = ["otel"] }
+markdown = "1.0.0"
+rap-protocol = "0.2.0"
+richrs = "0.2.1"
+rustyline = { version = "19.0.0", default-features = false }
+serde_json = "1.0.154"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
+unicode-width = "0.2.3"
