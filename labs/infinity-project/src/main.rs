@@ -3,15 +3,26 @@
 //! Each line typed at the prompt is sent to one agent thread, and the reply
 //! is printed as it streams, its Markdown rendered for the terminal (see
 //! [`markdown`]). `/clear` starts a new conversation on an empty screen,
-//! `/usage` shows the tokens the current one has used, and `/exit`, Ctrl+C
-//! or Ctrl+D leave the chat; the
-//! prompt's editing keys are described in [`input`]. The model can list the
-//! directory the chat was started in (see [`tools`]), and every turn is
-//! traced in Langfuse when its credentials are set (see [`langfuse`]).
+//! `/usage` shows the tokens the current one has used, `/model` lists the
+//! provider's models or changes to one of them (see [`model`]), `/help`
+//! lists the commands, and `/exit`, Ctrl+C or Ctrl+D leave the chat. A line
+//! that starts with `/` is never sent: when it is none of these, the chat
+//! says so and suggests the command it looks like (see [`command`]). A `/`
+//! typed at the prompt lists the commands under it, the most used first (see
+//! [`tally`]), and Enter on `/model` the models, on the one in use, for Down
+//! and Up to choose one (see [`menu`]). The prompt's editing keys are
+//! described in [`input`]. The model can list the directory the chat was
+//! started in (see [`tools`]), and every turn is traced in Langfuse when its
+//! credentials are set (see [`langfuse`]).
 
+mod command;
 mod input;
 mod langfuse;
 mod markdown;
+mod menu;
+mod model;
+mod screen;
+mod tally;
 mod tools;
 mod ui;
 mod usage;
@@ -22,19 +33,23 @@ use std::sync::Arc;
 
 use infinity_agent_core::stores::{InMemoryConversationStore, InMemoryStateStore};
 use infinity_agent_core::system::local::{LaunchingSystem, ThreadHandle, ThreadLifecycleState};
-use infinity_agent_core::system::{AgentEvent, AgentSystemBuilder, NoRapHttp, StaticModel};
+use infinity_agent_core::system::{AgentEvent, AgentSystemBuilder, NoRapHttp};
 use infinity_provider_bedrock::BedrockProvider;
 use tokio::task::LocalSet;
 
+use crate::command::{COMMANDS, Command};
 use crate::input::{Input, LineReader};
 use crate::langfuse::{Langfuse, TurnTrace};
+use crate::menu::Choices;
+use crate::model::ModelChoice;
+use crate::tally::Tally;
 use crate::tools::ListDirectoryTool;
 use crate::ui::Ui;
 use crate::usage::UsageMeter;
 
+/// The model a chat starts on.
 const MODEL_ID: &str = "global.anthropic.claude-opus-5-5";
-const HINT: &str =
-    "/clear new chat · /usage tokens used · /exit or Ctrl+C quit · ↑/↓ earlier messages";
+const HINT: &str = "/ commands · /exit or Ctrl+C quit · ↑/↓ earlier messages";
 const CONNECTING: &str = "Connecting…";
 const THINKING: &str = "Thinking…";
 const SYSTEM_STOPPED: &str = "the agent system stopped";
@@ -49,31 +64,35 @@ type System = LaunchingSystem<InMemoryConversationStore, InMemoryStateStore, NoR
 fn main() -> Result<ExitCode, BoxError> {
     // Before the runtime starts its threads: the environment can only be
     // changed safely while nothing else can be reading it.
-    load_dotenv();
+    let dotenv_warning = load_dotenv();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     // The agent system runs on local tasks.
-    runtime.block_on(LocalSet::new().run_until(chat()))
+    runtime.block_on(LocalSet::new().run_until(chat(dotenv_warning)))
 }
 
 /// Loads the `.env` of the current directory, or of the nearest one above
 /// it, into the environment. Variables that are already set keep their value.
-fn load_dotenv() {
-    if let Err(error) = dotenvy::dotenv()
-        && !error.not_found()
-    {
-        eprintln!("warning: .env was not loaded: {error}");
-    }
+/// Returns what to tell the user when there is one and it was not loaded.
+fn load_dotenv() -> Option<String> {
+    let error = dotenvy::dotenv().err().filter(|error| !error.not_found())?;
+    Some(format!("warning: .env was not loaded: {error}"))
 }
 
-async fn chat() -> Result<ExitCode, BoxError> {
+async fn chat(warning: Option<String>) -> Result<ExitCode, BoxError> {
     // Without a terminal on stdin there is no line editing: each line of the
     // pipe or file is one message.
     let interactive = io::stdin().is_terminal();
     let hint = interactive.then_some(HINT);
     let mut ui = Ui::new()?;
+    ui.open_screen()?;
     ui.header(MODEL_ID, hint)?;
+    // Under the header: said before it, it would scroll off with the
+    // screen the chat found.
+    if let Some(warning) = warning {
+        ui.diagnostic(&warning)?;
+    }
 
     ui.start_spinner(CONNECTING);
     let meter = UsageMeter::default();
@@ -83,7 +102,7 @@ async fn chat() -> Result<ExitCode, BoxError> {
         if let Ok(langfuse) = &langfuse {
             provider = langfuse.trace_provider(provider);
         }
-        let model = StaticModel::new(provider, MODEL_ID).await?;
+        let model = ModelChoice::new(provider, MODEL_ID).await?;
         Ok::<_, BoxError>((langfuse, model))
     };
     let (langfuse, model) = tokio::select! {
@@ -104,7 +123,7 @@ async fn chat() -> Result<ExitCode, BoxError> {
     let mut system = AgentSystemBuilder::new_local(
         InMemoryConversationStore::new(),
         InMemoryStateStore::new(),
-        model,
+        model.clone(),
     )
     .with_tokio_sleep_tools()
     .tool(Box::new(ListDirectoryTool::in_current_dir()?))
@@ -118,6 +137,14 @@ async fn chat() -> Result<ExitCode, BoxError> {
         thread,
         langfuse: langfuse.as_ref(),
         meter: &meter,
+        model,
+        // Only the commands typed at the prompt are counted, where the
+        // menu that lists the most used first shows.
+        tally: if interactive {
+            Tally::of_user()
+        } else {
+            Tally::unkept()
+        },
         hint,
     };
     let last_turn_ok = chat.converse().await;
@@ -143,32 +170,6 @@ async fn chat() -> Result<ExitCode, BoxError> {
     })
 }
 
-/// What a line typed at the prompt asks for.
-#[derive(Debug, PartialEq, Eq)]
-enum Command<'a> {
-    /// Leave the chat.
-    Exit,
-    /// Start a new conversation on an empty screen.
-    Clear,
-    /// Show what the conversation has used.
-    Usage,
-    /// Anything else is a message for the model.
-    Message(&'a str),
-}
-
-impl<'a> Command<'a> {
-    /// `None` for a blank line.
-    fn parse(line: &'a str) -> Option<Self> {
-        match line.trim() {
-            "" => None,
-            "/exit" => Some(Self::Exit),
-            "/clear" => Some(Self::Clear),
-            "/usage" => Some(Self::Usage),
-            message => Some(Self::Message(message)),
-        }
-    }
-}
-
 /// A chat: the conversation with one thread, and what it takes to run it.
 struct Chat<'a> {
     ui: &'a mut Ui,
@@ -177,6 +178,10 @@ struct Chat<'a> {
     thread: ThreadHandle,
     langfuse: Option<&'a Langfuse>,
     meter: &'a UsageMeter,
+    /// The model the thread's next round is on, of those of the provider.
+    model: ModelChoice,
+    /// How often each command has been run.
+    tally: Tally,
     /// The header's line about the commands, when there is someone to read
     /// it.
     hint: Option<&'static str>,
@@ -186,24 +191,41 @@ impl Chat<'_> {
     /// Reads lines and does what they ask until the user leaves. Returns
     /// whether the last turn went well.
     async fn converse(&mut self) -> Result<bool, BoxError> {
-        let reader = LineReader::spawn(self.ui.prompt())?;
+        let reader = LineReader::spawn(self.ui.prompt(), self.ui.menu_styles())?;
         let mut last_turn_ok = true;
         // The current conversation: its turns, and what the meter read when
         // it started.
         let mut turns = 0;
         let mut usage_before = self.meter.totals();
         loop {
+            let choices = self.choices();
+            self.ui.prompting(choices.rows());
             let input = tokio::select! {
-                input = reader.read_line() => input?,
+                input = reader.read_line(choices) => input?,
                 // At a terminal the line editor reads Ctrl+C as a key and
                 // returns `Quit`. The signal only comes when it reads stdin
                 // as a file.
                 () = ctrl_c() => Input::Quit,
             };
+            if reader.screen_erased() {
+                self.ui.screen_erased();
+            }
             let Input::Line(line) = input else { break };
+            if self.hint.is_some() {
+                // The line editor drew the line, not the chat: the screen
+                // is told of it.
+                self.ui.typed(&line);
+            }
             let Some(command) = Command::parse(&line) else {
                 continue;
             };
+            if let Some(entry) = command.entry()
+                && let Err(error) = self.tally.count(entry.name)
+            {
+                // Once: from here on the tally counts for this chat only.
+                let lost = format!("The menu of commands will not keep its order: {error}");
+                self.ui.diagnostic(&lost)?;
+            }
             if command == Command::Exit {
                 break;
             }
@@ -223,6 +245,22 @@ impl Chat<'_> {
                     let used = self.meter.totals().since(&usage_before);
                     self.ui.usage_report(turns, &used)?;
                 }
+                Command::Model(None) => self.ui.models(&self.model.values())?,
+                Command::Model(Some(name)) => match self.model.select(name) {
+                    // The conversation goes on, with this model from its
+                    // next message. The header says which, while it is
+                    // on the screen.
+                    Ok(model) => {
+                        self.ui.retitle(&model.model_id)?;
+                        let now = format!("Model: {} ({})", model.display_name, model.model_id);
+                        self.ui.note(&now)?;
+                    }
+                    Err(error) => self.ui.diagnostic(&error.to_string())?,
+                },
+                Command::Help => self.ui.help(&COMMANDS)?,
+                // Not a turn: the line stays here, and the last turn's
+                // outcome stands.
+                Command::Invalid(invalid) => self.ui.diagnostic(&invalid.to_string())?,
                 Command::Message(message) => {
                     turns += 1;
                     match self.run_turn(message).await? {
@@ -235,13 +273,22 @@ impl Chat<'_> {
         Ok(last_turn_ok)
     }
 
+    /// What the menus under the prompt list: the commands, the most used
+    /// first, and the models for `/model`.
+    fn choices(&self) -> Choices {
+        Choices {
+            commands: self.tally.ranking(),
+            arguments: vec![(command::MODEL, self.model.values())],
+        }
+    }
+
     /// Starts a new conversation on an empty screen: a thread that has seen
     /// nothing, and a session of its own in Langfuse. The lines typed so far
-    /// stay within reach of Up and Down.
+    /// stay within reach of Up and Down, and the model is the one in use.
     async fn clear(&mut self) -> Result<(), BoxError> {
         self.thread = self.system.thread_builder().launch().await;
         self.ui.clear_screen()?;
-        self.ui.header(MODEL_ID, self.hint)?;
+        self.ui.header(&self.model.current().model_id, self.hint)?;
         if let Some(langfuse) = self.langfuse {
             langfuse.new_session();
             let session = format!("Langfuse session: {}", langfuse.session_url());
@@ -391,24 +438,5 @@ async fn ctrl_c() {
     if tokio::signal::ctrl_c().await.is_err() {
         // No handler was installed: SIGINT still ends the process.
         std::future::pending::<()>().await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Command;
-
-    #[test]
-    fn commands_are_whole_lines() {
-        assert_eq!(Command::parse("  /exit \n"), Some(Command::Exit));
-        assert_eq!(Command::parse("/clear"), Some(Command::Clear));
-        assert_eq!(Command::parse("/usage"), Some(Command::Usage));
-        assert_eq!(Command::parse("  \t"), None);
-        // Text that only starts like a command is a message.
-        assert_eq!(
-            Command::parse("/usage of what?"),
-            Some(Command::Message("/usage of what?"))
-        );
-        assert_eq!(Command::parse(" hola "), Some(Command::Message("hola")));
     }
 }

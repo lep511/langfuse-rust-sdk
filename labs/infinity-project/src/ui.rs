@@ -4,16 +4,28 @@
 //! Replies are Markdown (see [`crate::markdown`]). A reply is printed block
 //! by block, as each one is complete; on a terminal, the text still being
 //! written shows under them on one dim line that is redrawn as it grows.
+//!
+//! On a terminal the chat starts on an empty screen, its header on the
+//! first row. The header's title is drawn again there when it changes, for
+//! as long as the header has not scrolled off (see [`crate::screen`]).
+//!
+//! It is the terminal's own screen, not its alternate one: the lines that
+//! scroll off it are the terminal's to keep, and scrolling back through them
+//! is how a reply longer than the screen is read. That is also why the chat
+//! cannot take itself off the terminal when it ends.
 
 use std::io::{self, IsTerminal};
 
 use infinity_provider_protocol::Usage;
-use richrs::console::ColorSystem;
+use richrs::console::{ColorSystem, StderrWriter, StdoutWriter};
 use richrs::prelude::{Console, Justify, Rule, Segment, Status, Style, Text};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::command::{self, Entry, SIGIL};
 use crate::input::PromptText;
 use crate::markdown::{Line, MarkdownStream};
+use crate::menu::{Styles, Value};
+use crate::screen::{SharedScreen, Tracked};
 use crate::usage::{Tokens, Totals};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -29,6 +41,10 @@ const REPLY_MARGIN: &str = "  ";
 const PREVIEW_SLACK: usize = 3;
 /// Moves the cursor to the start of its line and erases the line.
 const ERASE_LINE: &str = "\r\x1b[K";
+/// The row of a menu that is on the line: black on sky blue. Both are
+/// colors of the 256-color palette, which terminals show the same whatever
+/// their theme, and more of them than show 24-bit colors.
+const CHOSEN_STYLE: &str = "bold color(16) on color(117)";
 
 pub struct Ui {
     /// The conversation goes to stdout.
@@ -39,7 +55,16 @@ pub struct Ui {
     err_colors: bool,
     /// Whether stdout is a terminal where a line can be redrawn.
     live: bool,
+    /// How far down the screen the chat has drawn.
+    screen: SharedScreen,
+    /// Whether the header was drawn at the top of an empty screen: its
+    /// title is then on the first row, until it scrolls off.
+    titled: bool,
     accent: Style,
+    /// The command of a line that starts with `/`.
+    command: Style,
+    /// The row of the menu of commands whose command is on the line.
+    chosen: Style,
     dim: Style,
     warning: Style,
     reply_mark: Style,
@@ -65,15 +90,23 @@ impl Ui {
     pub fn new() -> Result<Self, BoxError> {
         let colors = colors_enabled(io::stdout());
         let err_colors = colors_enabled(io::stderr());
-        let mut console = Console::new();
-        let mut err_console = Console::stderr();
-        // richrs always emits ANSI codes unless told otherwise.
-        if !colors {
-            console.set_color_system(ColorSystem::None);
-        }
-        if !err_colors {
-            err_console.set_color_system(ColorSystem::None);
-        }
+        // Both streams through writers that let the screen follow what
+        // goes to the terminal.
+        let screen = SharedScreen::default();
+        let mut console = Console::with_writer(Tracked::new(StdoutWriter, screen.clone()));
+        let mut err_console = Console::with_writer(Tracked::new(StderrWriter, screen.clone()));
+        // The colors richrs finds the terminal to have, which a console
+        // with a writer of its own does not look for. It always emits ANSI
+        // codes unless told otherwise.
+        let color_system = |colors| {
+            if colors {
+                Console::new().color_system()
+            } else {
+                ColorSystem::None
+            }
+        };
+        console.set_color_system(color_system(colors));
+        err_console.set_color_system(color_system(err_colors));
         Ok(Self {
             console,
             err_console,
@@ -81,7 +114,11 @@ impl Ui {
             err_colors,
             live: io::stdout().is_terminal()
                 && std::env::var_os("TERM").is_some_and(|t| t != "dumb"),
+            screen,
+            titled: false,
             accent: Style::parse("bold cyan")?,
+            command: Style::parse("cyan")?,
+            chosen: Style::parse(CHOSEN_STYLE)?,
             dim: Style::parse("dim")?,
             warning: Style::parse("yellow")?,
             reply_mark: Style::parse("bold magenta")?,
@@ -94,16 +131,55 @@ impl Ui {
 
     /// A rule with `title`, then the `hint` line.
     pub fn header(&mut self, title: &str, hint: Option<&str>) -> Result<(), BoxError> {
-        let rule = Rule::with_title(title)
-            .style(self.dim.clone())
-            .title_style(self.accent.clone());
-        self.console
-            .write_segments(&rule.render(self.console.width()))?;
+        self.titled = self.screen.lock().is_empty();
+        let rule = self.title_rule(title).render(self.console.width());
+        self.console.write_segments(&rule)?;
         if let Some(hint) = hint {
             self.console
                 .print_text(&Text::styled(hint, self.dim.clone()))?;
         }
         Ok(self.console.flush()?)
+    }
+
+    /// The header's rule.
+    fn title_rule(&self, title: &str) -> Rule {
+        Rule::with_title(title)
+            .style(self.dim.clone())
+            .title_style(self.accent.clone())
+    }
+
+    /// Draws the header's rule again with `title`, where it is: on the
+    /// first row of the screen, when the header is still there. Returns
+    /// whether it is.
+    pub fn retitle(&mut self, title: &str) -> Result<bool, BoxError> {
+        self.end_output()?;
+        let size = self.console.size();
+        let on_screen = self.screen.lock().holds_first_row(size.width, size.height);
+        if !(self.titled && on_screen) {
+            return Ok(false);
+        }
+        let rule = self.title_rule(title).render(size.width);
+        // Save the cursor, go to the first row and erase it; then back.
+        self.console.write("\x1b7\x1b[H\x1b[2K")?;
+        self.console.write_segments(&rule)?;
+        self.console.write("\x1b8")?;
+        self.console.flush()?;
+        Ok(true)
+    }
+
+    /// Starts on an empty screen, on a terminal. What was on the screen is
+    /// not erased: it scrolls off, and stays within reach above.
+    pub fn open_screen(&mut self) -> Result<(), BoxError> {
+        if self.live {
+            let size = self.console.size();
+            // Line feeds down to the last row and on push every line off
+            // the top. What a wrong height would leave is erased.
+            let scroll = "\n".repeat(size.height.saturating_sub(1));
+            self.console.write(&format!("{scroll}\x1b[H\x1b[J"))?;
+            self.console.flush()?;
+            self.screen.lock().start(size.width, size.height);
+        }
+        Ok(())
     }
 
     /// Erases the screen and what has scrolled off it, on a terminal.
@@ -113,8 +189,69 @@ impl Ui {
             // Cursor home, erase the display, erase the scrollback.
             self.console.write("\x1b[H\x1b[2J\x1b[3J")?;
             self.console.flush()?;
+            let size = self.console.size();
+            self.screen.lock().start(size.width, size.height);
         }
         Ok(())
+    }
+
+    /// The prompt is about to show, with a menu of up to `menu_rows` under
+    /// it while a line is typed.
+    pub fn prompting(&mut self, menu_rows: usize) {
+        self.screen.lock().reach(menu_rows);
+    }
+
+    /// The line editor left `line` after the prompt, on the terminal, and
+    /// ended its row.
+    pub fn typed(&mut self, line: &str) {
+        self.screen.lock().write(&format!("{PROMPT_MARK} {line}\n"));
+    }
+
+    /// The line editor erased the screen: the header is no longer on it.
+    pub fn screen_erased(&mut self) {
+        self.screen.lock().lose();
+    }
+
+    /// The commands and what they do: the answer to `/help`.
+    pub fn help(&mut self, commands: &[Entry]) -> Result<(), BoxError> {
+        let rows = commands
+            .iter()
+            .map(|entry| (format!("{SIGIL}{}", entry.name), entry.about));
+        let keys = format!("{SIGIL} lists them under the prompt, where ↓ and ↑ choose one.");
+        self.list("Commands", rows, &keys)
+    }
+
+    /// The models the chat can talk to: the answer to `/model`.
+    pub fn models(&mut self, models: &[Value]) -> Result<(), BoxError> {
+        let rows = models
+            .iter()
+            .map(|model| (model.name.clone(), model.about.as_str()));
+        let keys = format!("{SIGIL}{} and a name changes to it.", command::MODEL);
+        self.list("Models", rows, &keys)
+    }
+
+    /// A list under a title: a row for each name, with what it is about,
+    /// and a line on the keys that go with the list.
+    fn list<'a>(
+        &mut self,
+        title: &str,
+        rows: impl Iterator<Item = (String, &'a str)> + Clone,
+        keys: &str,
+    ) -> Result<(), BoxError> {
+        self.end_output()?;
+        self.console
+            .print_text(&Text::styled(title, self.accent.clone()))?;
+        let width = rows.clone().map(|(name, _)| name.width()).max();
+        let width = width.unwrap_or(0);
+        for (name, about) in rows {
+            let mut row = Text::from_str(REPLY_MARGIN);
+            row.append_styled(&format!("{name:<width$}"), self.command.clone());
+            row.append_plain(&format!("  {about}"));
+            self.console.print_text(&row)?;
+        }
+        Ok(self
+            .console
+            .print_text(&Text::styled(keys, self.dim.clone()))?)
     }
 
     /// What the chat has used so far: the answer to `/usage`.
@@ -146,11 +283,25 @@ impl Ui {
         PromptText { plain, styled }
     }
 
+    /// The styles of a command typed at the prompt and of the menu of
+    /// commands under it, when the terminal takes colors.
+    pub fn menu_styles(&self) -> Option<Styles> {
+        self.colors.then(|| Styles {
+            command: self.command.to_ansi(),
+            chosen: self.chosen.to_ansi(),
+            about: self.dim.to_ansi(),
+        })
+    }
+
     /// Prints a submitted line after the prompt mark, for input that the
-    /// terminal did not echo (stdin is a pipe or a file).
+    /// terminal did not echo (stdin is a pipe or a file). Its command is in
+    /// the command style, as the line editor shows a typed one.
     pub fn echo_input(&mut self, text: &str) -> Result<(), BoxError> {
         let mut line = Text::styled(format!("{PROMPT_MARK} "), self.accent.clone());
-        line.append_plain(&sanitize(text));
+        let (blank, command, rest) = command::split(text).unwrap_or(("", "", text));
+        line.append_plain(&sanitize(blank));
+        line.append_styled(&sanitize(command), self.command.clone());
+        line.append_plain(&sanitize(rest));
         Ok(self.console.print_text(&line)?)
     }
 
@@ -376,7 +527,18 @@ fn format_usage(usage: &Usage) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Usage, format_usage, preview_text, sanitize};
+    use richrs::prelude::Style;
+
+    use super::{CHOSEN_STYLE, Usage, format_usage, preview_text, sanitize};
+
+    #[test]
+    fn the_chosen_row_is_bold_black_on_sky_blue() {
+        let style = Style::parse(CHOSEN_STYLE).unwrap().to_ansi();
+        // Colors 16 and 117 of the 256-color palette.
+        for code in ["\x1b[38;5;16m", "\x1b[48;5;117m", "\x1b[1m"] {
+            assert!(style.contains(code), "{code:?} is not in {style:?}");
+        }
+    }
 
     fn usage(input: u64, output: u64, total: u64, cache_read: u64) -> Usage {
         Usage {
