@@ -4,7 +4,9 @@
 # project it generates (which copies every dev-dependency), never compile them.
 #
 # The features mirror the main crate's names, so the shared `tests/common`
-# helpers and the `#![cfg(feature = "...")]` lines keep working:
+# helpers and the `#![cfg(feature = "...")]` lines keep working. The test files
+# share `tests/support/`: the main crate's `tests/common`, the exported spans
+# of a tracer on a fake Langfuse and, under `bedrock`, the fake Bedrock.
 #
 #     cargo test -p langfuse-rust-sdk-integration-tests --all-features
 #     cargo run -p langfuse-rust-sdk-integration-tests --example bedrock_tracing --features bedrock
@@ -50,12 +52,16 @@ aws-smithy-eventstream = { version = "0.61", optional = true }
 aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# `net`, `io-util` and `time`: the fake Bedrock of `tests/bedrock_tests.rs`
+# that sends its event stream chunk by chunk.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
 dotenvy = "0.15"
 wiremock = "0.6"
 futures = "0.3.34"
 serde_json = "1"
 tracing = "0.1"
+# Parses `completion_start_time` (the SDK already depends on it).
+chrono = "0.4"
 
 [[example]]
 name = "bedrock_tracing"
