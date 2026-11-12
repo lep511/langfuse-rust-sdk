@@ -1,0 +1,22 @@
+#!/bin/sh
+# El CLI de Langfuse de este proyecto: el binario estático de
+# ../../langfuse-cli/dist para esta máquina, con las credenciales del .env de
+# pruebas del proyecto (que tienen precedencia sobre las del entorno).
+#
+#   bin/langfuse api health get
+#   bin/langfuse api observations list --limit 5 --format table
+#
+# LANGFUSE_CLI elige otro binario.
+set -eu
+
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+cli=${LANGFUSE_CLI:-$root/../../langfuse-cli/dist/langfuse-$(uname -m)-unknown-linux-musl}
+
+if [ ! -x "$cli" ]; then
+    echo "bin/langfuse: no se encuentra el binario del CLI: $cli" >&2
+    exit 127
+fi
+if [ -f "$root/.env" ]; then
+    exec "$cli" --env "$root/.env" "$@"
+fi
+exec "$cli" "$@"
