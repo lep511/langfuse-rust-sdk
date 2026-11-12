@@ -42,6 +42,12 @@ macro_rules! resource {
                 vec![ $( &<$ty as $crate::operation::Operation>::META, )+ ]
             }
         }
+
+        // Evaluate every `META` when the crate is checked, not only when it
+        // is built: its `const fn` builder asserts what the executor needs.
+        const _: () = {
+            $( let _ = <$ty as $crate::operation::Operation>::META; )+
+        };
     };
 }
 
@@ -67,6 +73,14 @@ macro_rules! path_op {
                     $( .path_param($wire, &self.$field) )*)
             }
         }
+
+        // The parameters filled above exist in the path: checked when compiled.
+        const _: () = {
+            $( assert!(
+                <$name as $crate::operation::Operation>::META.has_path_parameter($wire),
+                concat!("the path of ", stringify!($name), " has no parameter ", $wire)
+            ); )*
+        };
     };
 }
 
@@ -96,6 +110,14 @@ macro_rules! json_op {
                     .body(self.body.read(ctx)?))
             }
         }
+
+        // The parameters filled above exist in the path: checked when compiled.
+        const _: () = {
+            $( assert!(
+                <$name as $crate::operation::Operation>::META.has_path_parameter($wire),
+                concat!("the path of ", stringify!($name), " has no parameter ", $wire)
+            ); )*
+        };
     };
 }
 
@@ -130,6 +152,14 @@ macro_rules! page_list_op {
                 Some(&self.all)
             }
         }
+
+        // The parameters filled above exist in the path: checked when compiled.
+        const _: () = {
+            $( assert!(
+                <$name as $crate::operation::Operation>::META.has_path_parameter($wire),
+                concat!("the path of ", stringify!($name), " has no parameter ", $wire)
+            ); )*
+        };
     };
 }
 
@@ -164,6 +194,14 @@ macro_rules! cursor_list_op {
                 Some(&self.all)
             }
         }
+
+        // The parameters filled above exist in the path: checked when compiled.
+        const _: () = {
+            $( assert!(
+                <$name as $crate::operation::Operation>::META.has_path_parameter($wire),
+                concat!("the path of ", stringify!($name), " has no parameter ", $wire)
+            ); )*
+        };
     };
 }
 
@@ -434,38 +472,41 @@ pub async fn run(api: &ApiArgs, globals: &GlobalArgs, io: &mut Io<'_>) -> Result
         ApiCommand::Schema => {
             if globals.json {
                 let schema = schema::schema();
-                writeln!(io.stdout, "{schema}").map_err(write_error)?;
+                io.out_with(|out| {
+                    serde_json::to_writer(&mut *out, &schema)?;
+                    out.write_all(b"\n")
+                })?;
             } else {
                 let help = crate::command()
                     .find_subcommand_mut("api")
                     .map(|api| api.render_help());
                 if let Some(help) = help {
-                    write!(io.stdout, "{}", help.ansi()).map_err(write_error)?;
+                    let text = if io.color_stdout(globals.color) {
+                        help.ansi().to_string()
+                    } else {
+                        help.to_string()
+                    };
+                    io.out(text.as_bytes())?;
                 }
-                writeln!(io.stdout, "\nPass --json for the machine-readable schema.")
-                    .map_err(write_error)?;
+                io.out(b"\nPass --json for the machine-readable schema.\n")?;
             }
             Ok(Exit::Success)
         }
         ApiCommand::Versions { action } => match action {
             None | Some(VersionsAction::List) => {
-                writeln!(io.stdout, "{SPEC} {}", execute::SDK_VERSION).map_err(write_error)?;
+                io.out(format!("{SPEC} {}\n", execute::SDK_VERSION).as_bytes())?;
                 Ok(Exit::Success)
             }
             Some(VersionsAction::Detect) => {
                 let settings = config::load(globals)?;
                 let client = settings.client()?;
-                let health = client.health.check().await.map_err(CliError::from)?;
-                writeln!(io.stdout, "{}", health.version).map_err(write_error)?;
+                let health = client.health.check().await?;
+                io.out(format!("{}\n", health.version).as_bytes())?;
                 Ok(Exit::Success)
             }
         },
         ApiCommand::Resource(resource) => call(resource.operation(), api, globals, io).await,
     }
-}
-
-fn write_error(error: std::io::Error) -> CliError {
-    CliError::new(Exit::Internal, format!("Cannot write to stdout: {error}"))
 }
 
 async fn call(
@@ -490,13 +531,24 @@ async fn call(
         };
         operation.prepare(&mut ctx)?
     };
+    // A brace in a prepared path is a parameter the operation did not fill
+    // (values are percent-encoded, so they never contain one).
+    if request.path.contains('{') {
+        return Err(CliError::new(
+            Exit::Internal,
+            format!(
+                "{}: a path parameter is unfilled in {}",
+                meta.operation_id, request.path
+            ),
+        ));
+    }
     let settings = config::load(globals)?;
     if meta.auth {
         settings.require_credentials()?;
     }
     if output.curl {
         let curl = execute::render_curl(&settings, &request, output.show_secrets)?;
-        writeln!(io.stdout, "{curl}").map_err(write_error)?;
+        io.out(format!("{curl}\n").as_bytes())?;
         return Ok(Exit::Success);
     }
 
@@ -523,7 +575,7 @@ async fn call(
         file: output.output.clone(),
         format: output.format,
         columns,
-        color: crate::use_color(globals.color, io.stdout_tty),
+        color: io.color_stdout(globals.color),
         width: io.width,
     };
     write_result(&result, &options, io)

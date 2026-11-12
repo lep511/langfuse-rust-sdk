@@ -40,10 +40,11 @@ impl From<Exit> for std::process::ExitCode {
 pub struct CliError {
     /// One-line summary, written to stderr (escaped for the terminal).
     pub message: String,
-    /// CLI-generated text appended to the message (already escaped).
-    pub hint: String,
     /// The process exit status.
     pub exit: Exit,
+    /// Whether the reader closed stdout: nothing is printed and the command
+    /// ends successfully.
+    closed_stdout: bool,
 }
 
 impl CliError {
@@ -51,9 +52,28 @@ impl CliError {
     pub fn new(exit: Exit, message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            hint: String::new(),
             exit,
+            closed_stdout: false,
         }
+    }
+
+    /// A failed write to stdout.
+    ///
+    /// A closed pipe (`langfuse … | head`) is not a failure: the reader has
+    /// what it wanted, so the command ends quietly with exit 0, as it would
+    /// under the default `SIGPIPE` that Rust programs ignore. Anything else
+    /// (a full disk behind a redirection) is exit 1.
+    pub fn stdout(error: std::io::Error) -> Self {
+        let closed_stdout = error.kind() == std::io::ErrorKind::BrokenPipe;
+        Self {
+            closed_stdout,
+            ..Self::new(Exit::Internal, format!("Cannot write to stdout: {error}"))
+        }
+    }
+
+    /// Whether this is the quiet end of a command whose reader closed stdout.
+    pub fn is_closed_stdout(&self) -> bool {
+        self.closed_stdout
     }
 
     /// Invalid command or input (exit 2).
@@ -75,17 +95,11 @@ impl CliError {
     pub fn response(message: impl Into<String>) -> Self {
         Self::new(Exit::Response, message)
     }
-
-    /// Append a CLI-generated hint to the message.
-    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
-        self.hint = hint.into();
-        self
-    }
 }
 
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", self.message, self.hint)
+        f.write_str(&self.message)
     }
 }
 

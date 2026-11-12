@@ -3,7 +3,7 @@
 mod common;
 
 use common::{api, api_with, body_json, json, query_pairs, single_request};
-use langfuse_rust_cli::error::Exit;
+use langfuse_rust_cli::Exit;
 use serde_json::json;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -870,4 +870,143 @@ async fn unstable_placements() {
         .exit,
         Exit::Usage
     );
+}
+
+/// Flags whose values are an SDK enum: listed by clap, sent as the wire name.
+#[tokio::test]
+async fn enum_flags_are_checked_by_clap_and_sent_as_wire_names() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(json(200, json!({})))
+        .mount(&server)
+        .await;
+
+    let output = api(
+        &server,
+        &[
+            "api",
+            "annotation-queues",
+            "create-item",
+            "q1",
+            "--object-id",
+            "t1",
+            "--object-type",
+            "TRACE",
+            "--status",
+            "COMPLETED",
+        ],
+    )
+    .await;
+    assert_eq!(output.exit, Exit::Success, "{output:?}");
+    let output = api(
+        &server,
+        &[
+            "api",
+            "annotation-queues",
+            "update-item",
+            "q1",
+            "i1",
+            "--status",
+            "PENDING",
+        ],
+    )
+    .await;
+    assert_eq!(output.exit, Exit::Success, "{output:?}");
+    let output = api(
+        &server,
+        &[
+            "api",
+            "annotation-queues",
+            "list-items",
+            "q1",
+            "--status",
+            "PENDING",
+        ],
+    )
+    .await;
+    assert_eq!(output.exit, Exit::Success, "{output:?}");
+    let output = api(
+        &server,
+        &[
+            "api",
+            "score-configs",
+            "create",
+            "--name",
+            "quality",
+            "--data-type",
+            "NUMERIC",
+        ],
+    )
+    .await;
+    assert_eq!(output.exit, Exit::Success, "{output:?}");
+    let output = api(
+        &server,
+        &[
+            "api",
+            "organizations",
+            "update-membership",
+            "--user-id",
+            "u1",
+            "--role",
+            "ADMIN",
+        ],
+    )
+    .await;
+    assert_eq!(output.exit, Exit::Success, "{output:?}");
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 5);
+    assert_eq!(
+        body_json(&requests[0]),
+        json!({"objectId": "t1", "objectType": "TRACE", "status": "COMPLETED"})
+    );
+    assert_eq!(body_json(&requests[1]), json!({"status": "PENDING"}));
+    assert_eq!(query_pairs(&requests[2]), pairs(&[("status", "PENDING")]));
+    assert_eq!(
+        body_json(&requests[3]),
+        json!({"name": "quality", "dataType": "NUMERIC"})
+    );
+    assert_eq!(
+        body_json(&requests[4]),
+        json!({"userId": "u1", "role": "ADMIN"})
+    );
+
+    // A value outside the list is a usage error that names the list.
+    for args in [
+        vec![
+            "api",
+            "annotation-queues",
+            "list-items",
+            "q1",
+            "--status",
+            "DONE",
+        ],
+        vec![
+            "api",
+            "organizations",
+            "update-membership",
+            "--user-id",
+            "u1",
+            "--role",
+            "admin",
+        ],
+        vec![
+            "api",
+            "score-configs",
+            "create",
+            "--name",
+            "n",
+            "--data-type",
+            "CORRECTION",
+        ],
+    ] {
+        let output = api(&server, &args).await;
+        assert_eq!(output.exit, Exit::Usage, "{args:?}");
+        assert!(
+            output.stderr.contains("possible values:"),
+            "{}",
+            output.stderr
+        );
+    }
+    assert_eq!(server.received_requests().await.unwrap().len(), 5);
 }

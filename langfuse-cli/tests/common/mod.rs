@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use langfuse_rust_cli::error::Exit;
-use langfuse_rust_cli::output::Io;
+use langfuse_rust_cli::Exit;
+use langfuse_rust_cli::Io;
 use serde_json::Value;
 use wiremock::{MockServer, Request, ResponseTemplate};
 
@@ -36,6 +36,7 @@ pub async fn run_with(cwd: &Path, stdin: &[u8], args: &[&str]) -> Output {
         stdout_tty: false,
         stderr_tty: false,
         width: Some(100),
+        color_allowed: true,
         cwd: cwd.to_path_buf(),
     };
     let exit = langfuse_rust_cli::run(
@@ -47,6 +48,45 @@ pub async fn run_with(cwd: &Path, stdin: &[u8], args: &[&str]) -> Output {
         stdout: String::from_utf8(stdout).unwrap(),
         stderr: String::from_utf8(stderr).unwrap(),
         exit,
+    }
+}
+
+/// Run `langfuse <args>` in `cwd` writing stdout to `stdout`: the exit code
+/// and what went to stderr.
+pub async fn run_on(cwd: &Path, stdout: &mut dyn std::io::Write, args: &[&str]) -> (Exit, String) {
+    let mut stderr = Vec::new();
+    let mut input: &[u8] = b"";
+    let mut io = Io {
+        stdout,
+        stderr: &mut stderr,
+        stdin: &mut input,
+        stdout_tty: false,
+        stderr_tty: false,
+        width: Some(100),
+        color_allowed: true,
+        cwd: cwd.to_path_buf(),
+    };
+    let exit = langfuse_rust_cli::run(
+        std::iter::once("langfuse").chain(args.iter().copied()),
+        &mut io,
+    )
+    .await;
+    (exit, String::from_utf8(stderr).unwrap())
+}
+
+/// A stdout whose every write fails with `kind`: [`BrokenPipe`] is a reader
+/// that went away (`| head`), anything else a real failure.
+///
+/// [`BrokenPipe`]: std::io::ErrorKind::BrokenPipe
+pub struct FailingStdout(pub std::io::ErrorKind);
+
+impl std::io::Write for FailingStdout {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(self.0, "stdout failed"))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

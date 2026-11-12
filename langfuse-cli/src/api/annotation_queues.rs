@@ -7,11 +7,11 @@ use langfuse_rust_sdk::models::annotation_queues::{
     CreateAnnotationQueueItemRequest, UpdateAnnotationQueueItemRequest,
 };
 
-use crate::args::{AllPages, BodyChannel, PageArgs, wire_enum};
+use crate::args::{AllPages, BodyChannel, PageArgs, required, wire};
 use crate::error::Result;
 use crate::operation::{Context, HttpMethod, Operation, OperationMeta, PreparedRequest};
 
-const STATUS: [&str; 2] = ["PENDING", "COMPLETED"];
+const STATUS: &[&str] = &["PENDING", "COMPLETED"];
 
 page_list_op! {
     List {}
@@ -46,8 +46,8 @@ pub struct ListItems {
     /// The annotation queue ID
     queue_id: String,
     /// Only items with this status
-    #[arg(long, value_parser = STATUS, help_heading = "Query")]
-    status: Option<String>,
+    #[arg(long, value_parser = wire::<AnnotationQueueStatus>(STATUS), help_heading = "Query")]
+    status: Option<AnnotationQueueStatus>,
     #[command(flatten)]
     page: PageArgs,
     #[command(flatten)]
@@ -66,15 +66,10 @@ impl Operation for ListItems {
     .columns(&["id", "objectId", "objectType", "status", "createdAt"]);
 
     fn prepare(&self, _ctx: &mut Context<'_>) -> Result<PreparedRequest> {
-        let status = self
-            .status
-            .as_deref()
-            .map(|status| wire_enum::<AnnotationQueueStatus>("status", status))
-            .transpose()?;
         PreparedRequest::new(&Self::META)
             .path_param("queueId", &self.queue_id)
             .query(&ListQueueItemsParams {
-                status,
+                status: self.status,
                 page: self.page.page,
                 limit: self.page.limit,
             })
@@ -105,13 +100,13 @@ struct CreateItemFields {
     /// Type of the object
     #[arg(
         long,
-        value_parser = ["TRACE", "OBSERVATION", "SESSION"],
+        value_parser = wire::<AnnotationQueueObjectType>(&["TRACE", "OBSERVATION", "SESSION"]),
         required_unless_present_any = ["body_json", "body_file"]
     )]
-    object_type: Option<String>,
+    object_type: Option<AnnotationQueueObjectType>,
     /// Status of the new item [server default: PENDING]
-    #[arg(long, value_parser = STATUS)]
-    status: Option<String>,
+    #[arg(long, value_parser = wire::<AnnotationQueueStatus>(STATUS))]
+    status: Option<AnnotationQueueStatus>,
 }
 
 impl Operation for CreateItem {
@@ -132,15 +127,8 @@ impl Operation for CreateItem {
         let fields = &self.fields;
         request.body_from(&CreateAnnotationQueueItemRequest {
             object_id: fields.object_id.clone().unwrap_or_default(),
-            object_type: wire_enum::<AnnotationQueueObjectType>(
-                "object-type",
-                fields.object_type.as_deref().unwrap_or_default(),
-            )?,
-            status: fields
-                .status
-                .as_deref()
-                .map(|status| wire_enum("status", status))
-                .transpose()?,
+            object_type: required("object-type", fields.object_type)?,
+            status: fields.status,
         })
     }
 }
@@ -175,8 +163,8 @@ pub struct UpdateItem {
 #[command(next_help_heading = "Request body")]
 struct UpdateItemFields {
     /// New status of the item
-    #[arg(long, value_parser = STATUS)]
-    status: Option<String>,
+    #[arg(long, value_parser = wire::<AnnotationQueueStatus>(STATUS))]
+    status: Option<AnnotationQueueStatus>,
 }
 
 impl Operation for UpdateItem {
@@ -197,12 +185,7 @@ impl Operation for UpdateItem {
             return Ok(request.body(body));
         }
         request.body_from(&UpdateAnnotationQueueItemRequest {
-            status: self
-                .fields
-                .status
-                .as_deref()
-                .map(|status| wire_enum("status", status))
-                .transpose()?,
+            status: self.fields.status,
         })
     }
 }

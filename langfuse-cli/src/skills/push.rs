@@ -3,20 +3,24 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value, json};
+use futures_util::stream::{self, StreamExt as _, TryStreamExt as _};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::config::Settings;
 use crate::error::{CliError, Exit, Result};
-use crate::output::{Io, escape_terminal_text};
+use crate::output::{Io, escape_terminal_text, json_line};
 use crate::skills::PushArgs;
-use crate::skills::api::{Remote, SkillVersion};
+use crate::skills::api::{REQUEST_CONCURRENCY, Remote, SkillVersion};
 use crate::skills::directories;
 use crate::skills::local_skill::{
-    LocalSkill, LocalSkillFile, ReadError, discover_skill_directories, read_local_skill,
+    ExcludedPath, LocalSkill, LocalSkillFile, ReadError, discover_skill_directories,
+    read_local_skill,
 };
 use crate::skills::lock::{self, LockedSkill, Selector};
-use crate::skills::paths::{relative, resolve, to_slash};
+use crate::skills::paths::resolve;
 use crate::skills::publish_filter::parse_exclusions;
+use crate::skills::types::{SkillName, Version};
 
 struct Options {
     directory: PathBuf,
@@ -27,12 +31,12 @@ struct Options {
     follow_symlinks: bool,
     update_only: bool,
     no_lockfile: bool,
-    lockfile: Option<String>,
+    lockfile: Option<PathBuf>,
     exclude: Vec<String>,
 }
 
 fn parse_options(args: &PushArgs, cwd: &Path) -> Result<Options> {
-    if args.directory.is_empty() {
+    if args.directory.as_os_str().is_empty() {
         return Err(CliError::usage("skills push requires one directory"));
     }
     if let Some(message) = &args.commit_message
@@ -70,6 +74,8 @@ fn parse_options(args: &PushArgs, cwd: &Path) -> Result<Options> {
     })
 }
 
+/// The paths a push adds, changes and removes.
+#[derive(Debug, Clone, Serialize)]
 struct Changes {
     added: Vec<String>,
     changed: Vec<String>,
@@ -79,10 +85,6 @@ struct Changes {
 impl Changes {
     fn any(&self) -> bool {
         !self.added.is_empty() || !self.changed.is_empty() || !self.removed.is_empty()
-    }
-
-    fn json(&self) -> Value {
-        json!({"added": self.added, "changed": self.changed, "removed": self.removed})
     }
 }
 
@@ -125,70 +127,236 @@ struct Plan {
     previous: Option<SkillVersion>,
     changes: Changes,
     unchanged: bool,
+    /// The `path` of the lock entry, when there is a lockfile.
+    lock_path: Option<String>,
+}
+
+/// The `status` of a result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum Status {
+    Created,
+    Unchanged,
+    Labeled,
+    Skipped,
+    WouldCreate,
+    WouldLabel,
+}
+
+/// Why a skill was skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum Reason {
+    InvalidSkill,
+    NotFound,
+}
+
+/// The files of a snapshot, listed by `--dry-run`.
+#[derive(Debug, Serialize)]
+struct Snapshot {
+    included: Vec<String>,
+    excluded: Vec<ExcludedPath>,
+}
+
+/// A local skill that was not published, as its result starts.
+#[derive(Debug, Serialize)]
+struct Unpublished {
+    name: SkillName,
+    /// The `latest` version in Langfuse; `null` when the skill is not there.
+    version: Option<Version>,
+    directory: String,
+    files: usize,
+    #[serde(flatten)]
+    snapshot: Option<Snapshot>,
+}
+
+impl Unpublished {
+    fn new(options: &Options, plan: &Plan) -> Self {
+        Self {
+            name: plan.local.name.clone(),
+            version: plan.previous.as_ref().map(|previous| previous.version),
+            directory: plan.local.directory.display().to_string(),
+            files: plan.local.files.len(),
+            snapshot: options.dry_run.then(|| Snapshot {
+                included: plan
+                    .local
+                    .files
+                    .iter()
+                    .map(|file| file.path.clone())
+                    .collect(),
+                excluded: plan.local.excluded.clone(),
+            }),
+        }
+    }
+}
+
+fn is_false(flag: &bool) -> bool {
+    !flag
+}
+
+/// One result of the `--json` output. The order of the fields is the order
+/// of the keys, which is the official CLI's.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum Report {
+    /// `--recursive` met a directory that is not a valid skill.
+    #[serde(rename_all = "camelCase")]
+    Invalid {
+        directory: String,
+        status: Status,
+        reason: Reason,
+        message: String,
+        #[serde(skip_serializing_if = "is_false")]
+        dry_run: bool,
+    },
+    /// `--update-only` met a skill that does not exist in Langfuse.
+    #[serde(rename_all = "camelCase")]
+    NotFound {
+        #[serde(flatten)]
+        skill: Unpublished,
+        status: Status,
+        reason: Reason,
+        #[serde(skip_serializing_if = "is_false")]
+        dry_run: bool,
+    },
+    /// What `--dry-run` would do.
+    #[serde(rename_all = "camelCase")]
+    DryRun {
+        #[serde(flatten)]
+        skill: Unpublished,
+        status: Status,
+        changes: Changes,
+        dry_run: bool,
+        expected_version: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    /// A published, unchanged or labelled skill.
+    Completed {
+        name: SkillName,
+        version: Version,
+        directory: String,
+        files: usize,
+        labels: Vec<String>,
+        status: Status,
+    },
+}
+
+impl Report {
+    /// The text output: a summary line, then the snapshot of a dry run.
+    fn text(&self) -> String {
+        let (summary, snapshot) = match self {
+            Report::Invalid { message, .. } => (format!("Skipped invalid skill: {message}"), None),
+            Report::NotFound { skill, .. } => (
+                format!(
+                    "Skipped {}: skill does not exist in Langfuse ({})",
+                    skill.name, skill.directory
+                ),
+                skill.snapshot.as_ref(),
+            ),
+            Report::DryRun {
+                skill,
+                changes,
+                expected_version,
+                label,
+                ..
+            } => {
+                let versions = match skill.version {
+                    Some(version) => format!("v{version}->v{expected_version}"),
+                    None => format!("->v{expected_version}"),
+                };
+                let label = label
+                    .as_ref()
+                    .map(|label| format!("; label: {label}"))
+                    .unwrap_or_default();
+                (
+                    format!(
+                        "Dry run: {} {versions} ({} added, {} changed, {} removed{label})",
+                        skill.name,
+                        changes.added.len(),
+                        changes.changed.len(),
+                        changes.removed.len()
+                    ),
+                    skill.snapshot.as_ref(),
+                )
+            }
+            Report::Completed {
+                name,
+                version,
+                files,
+                labels,
+                status,
+                ..
+            } => {
+                let action = match status {
+                    Status::Unchanged => "Already up to date",
+                    Status::Labeled => "Labeled",
+                    _ => "Published",
+                };
+                (
+                    format!(
+                        "{action}: {name}@{version} ({files} files; labels: {})",
+                        labels.join(", ")
+                    ),
+                    None,
+                )
+            }
+        };
+        // Paths are printed as JSON strings, like the official CLI.
+        let quoted = |path: &str| escape_terminal_text(&Value::from(path).to_string());
+        let mut lines = vec![escape_terminal_text(&summary)];
+        if let Some(snapshot) = snapshot {
+            for path in &snapshot.included {
+                lines.push(format!("  Include {}", quoted(path)));
+            }
+            for excluded in &snapshot.excluded {
+                lines.push(format!(
+                    "  Exclude {} ({})",
+                    quoted(&excluded.path),
+                    excluded.reason.as_str()
+                ));
+            }
+        }
+        lines.join("\n")
+    }
 }
 
 /// A finished push of one skill (published, unchanged or labelled).
 struct Completed {
-    fields: Map<String, Value>,
-    name: String,
-    version: i64,
-    labels: Vec<String>,
-    status: &'static str,
+    name: SkillName,
+    version: Version,
     directory: PathBuf,
     files: usize,
+    labels: Vec<String>,
+    status: Status,
+}
+
+impl From<Completed> for Report {
+    fn from(completed: Completed) -> Self {
+        Report::Completed {
+            name: completed.name,
+            version: completed.version,
+            directory: completed.directory.display().to_string(),
+            files: completed.files,
+            labels: completed.labels,
+            status: completed.status,
+        }
+    }
 }
 
 enum Outcome {
     Completed(Completed),
-    Other(Map<String, Value>),
+    Other(Report),
 }
 
-fn base_fields(options: &Options, plan: &Plan) -> Map<String, Value> {
-    let mut fields = Map::new();
-    fields.insert("name".into(), json!(plan.local.name));
-    fields.insert(
-        "version".into(),
-        json!(plan.previous.as_ref().map(|previous| previous.version)),
-    );
-    fields.insert(
-        "directory".into(),
-        json!(plan.local.directory.display().to_string()),
-    );
-    fields.insert("files".into(), json!(plan.local.files.len()));
-    if options.dry_run {
-        fields.insert(
-            "included".into(),
-            json!(
-                plan.local
-                    .files
-                    .iter()
-                    .map(|file| file.path.as_str())
-                    .collect::<Vec<_>>()
-            ),
-        );
-        fields.insert(
-            "excluded".into(),
-            Value::Array(
-                plan.local
-                    .excluded
-                    .iter()
-                    .map(|excluded| json!({"path": excluded.path, "reason": excluded.reason.as_str()}))
-                    .collect(),
-            ),
-        );
-    }
-    fields
-}
-
-async fn push_skill(remote: &mut Remote, options: &Options, plan: &Plan) -> Result<Outcome> {
-    let mut fields = base_fields(options, plan);
+async fn push_skill(remote: &Remote, options: &Options, plan: &Plan) -> Result<Outcome> {
     if options.update_only && plan.previous.is_none() {
-        fields.insert("status".into(), json!("skipped"));
-        fields.insert("reason".into(), json!("not-found"));
-        if options.dry_run {
-            fields.insert("dryRun".into(), json!(true));
-        }
-        return Ok(Outcome::Other(fields));
+        return Ok(Outcome::Other(Report::NotFound {
+            skill: Unpublished::new(options, plan),
+            status: Status::Skipped,
+            reason: Reason::NotFound,
+            dry_run: options.dry_run,
+        }));
     }
     if options.dry_run {
         let would_label = options.label.as_ref().is_some_and(|label| {
@@ -198,57 +366,57 @@ async fn push_skill(remote: &mut Remote, options: &Options, plan: &Plan) -> Resu
                 .is_some_and(|previous| previous.labels.contains(label))
         });
         let status = match (plan.unchanged, would_label) {
-            (true, true) => "would-label",
-            (true, false) => "unchanged",
-            (false, _) => "would-create",
+            (true, true) => Status::WouldLabel,
+            (true, false) => Status::Unchanged,
+            (false, _) => Status::WouldCreate,
         };
-        let previous_version = plan.previous.as_ref().map(|previous| previous.version);
-        let expected = if plan.unchanged {
-            previous_version.unwrap_or(0)
-        } else {
-            previous_version.unwrap_or(0) + 1
-        };
-        fields.insert("status".into(), json!(status));
-        fields.insert("changes".into(), plan.changes.json());
-        fields.insert("dryRun".into(), json!(true));
-        fields.insert("expectedVersion".into(), json!(expected));
-        if let Some(label) = &options.label {
-            fields.insert("label".into(), json!(label));
-        }
-        return Ok(Outcome::Other(fields));
+        let previous_version = plan
+            .previous
+            .as_ref()
+            .map_or(0, |previous| previous.version.get());
+        return Ok(Outcome::Other(Report::DryRun {
+            skill: Unpublished::new(options, plan),
+            status,
+            changes: plan.changes.clone(),
+            dry_run: true,
+            expected_version: if plan.unchanged {
+                previous_version
+            } else {
+                previous_version + 1
+            },
+            label: options.label.clone(),
+        }));
     }
     let skill = match (&plan.previous, plan.unchanged) {
         (Some(previous), true) => previous.clone(),
         _ => publish_skill(remote, plan, options.commit_message.as_deref()).await?,
     };
     Ok(Outcome::Completed(Completed {
-        fields,
-        name: skill.name.clone(),
+        name: skill.name,
         version: skill.version,
-        labels: skill.labels,
-        status: if plan.unchanged {
-            "unchanged"
-        } else {
-            "created"
-        },
         directory: plan.local.directory.clone(),
         files: plan.local.files.len(),
+        labels: skill.labels,
+        status: if plan.unchanged {
+            Status::Unchanged
+        } else {
+            Status::Created
+        },
     }))
 }
 
 async fn publish_skill(
-    remote: &mut Remote,
+    remote: &Remote,
     plan: &Plan,
     commit_message: Option<&str>,
 ) -> Result<SkillVersion> {
-    let files: Vec<(String, String)> = plan
+    let files = plan
         .local
         .files
         .iter()
-        .map(|file| (file.path.clone(), file.content.clone()))
-        .collect();
+        .map(|file| (file.path.as_str(), file.content.as_str()));
     let skill = remote
-        .create_skill_version(&plan.local.name, &files, commit_message)
+        .create_skill_version(&plan.local.name, files, commit_message)
         .await?;
     let mismatch = snapshot_changes(&plan.local.files, Some(&skill)).any();
     let not_advanced = plan
@@ -261,116 +429,6 @@ async fn publish_skill(
         ));
     }
     Ok(skill)
-}
-
-impl Completed {
-    fn json(&self) -> Value {
-        let mut fields = self.fields.clone();
-        fields.insert("version".into(), json!(self.version));
-        fields.insert("labels".into(), json!(self.labels));
-        fields.insert("status".into(), json!(self.status));
-        Value::Object(fields)
-    }
-
-    fn summary(&self) -> String {
-        let action = match self.status {
-            "unchanged" => "Already up to date",
-            "labeled" => "Labeled",
-            _ => "Published",
-        };
-        format!(
-            "{action}: {}@{} ({} files; labels: {})",
-            self.name,
-            self.version,
-            self.files,
-            self.labels.join(", ")
-        )
-    }
-}
-
-fn summary(fields: &Map<String, Value>) -> String {
-    let text = |key: &str| {
-        fields
-            .get(key)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    match text("reason").as_str() {
-        "invalid-skill" => return format!("Skipped invalid skill: {}", text("message")),
-        "not-found" => {
-            return format!(
-                "Skipped {}: skill does not exist in Langfuse ({})",
-                text("name"),
-                text("directory")
-            );
-        }
-        _ => {}
-    }
-    let count = |key: &str| {
-        fields
-            .get("changes")
-            .and_then(|changes| changes.get(key))
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len)
-    };
-    let label = fields
-        .get("label")
-        .and_then(Value::as_str)
-        .map(|label| format!("; label: {label}"))
-        .unwrap_or_default();
-    let expected = fields
-        .get("expectedVersion")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let versions = match fields.get("version").and_then(Value::as_i64) {
-        Some(version) => format!("v{version}->v{expected}"),
-        None => format!("->v{expected}"),
-    };
-    format!(
-        "Dry run: {} {versions} ({} added, {} changed, {} removed{label})",
-        text("name"),
-        count("added"),
-        count("changed"),
-        count("removed")
-    )
-}
-
-fn format_result(summary: &str, fields: &Map<String, Value>) -> String {
-    let mut lines = vec![escape_terminal_text(summary)];
-    if let Some(included) = fields.get("included").and_then(Value::as_array) {
-        for path in included {
-            lines.push(format!(
-                "  Include {}",
-                escape_terminal_text(&path.to_string())
-            ));
-        }
-        for excluded in fields
-            .get("excluded")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            lines.push(format!(
-                "  Exclude {} ({})",
-                escape_terminal_text(&excluded["path"].to_string()),
-                excluded["reason"].as_str().unwrap_or_default()
-            ));
-        }
-    }
-    lines.join("\n")
-}
-
-fn skipped_invalid(directory: &Path, message: &str, dry_run: bool) -> Map<String, Value> {
-    let mut fields = Map::new();
-    fields.insert("directory".into(), json!(directory.display().to_string()));
-    fields.insert("status".into(), json!("skipped"));
-    fields.insert("reason".into(), json!("invalid-skill"));
-    fields.insert("message".into(), json!(message));
-    if dry_run {
-        fields.insert("dryRun".into(), json!(true));
-    }
-    fields
 }
 
 /// Run `langfuse skills push`.
@@ -387,31 +445,33 @@ pub async fn run(
         .unwrap_or(Path::new("/"))
         .to_path_buf();
     let lock_base = if options.recursive {
-        options.directory.clone()
+        &options.directory
     } else {
-        parent.clone()
+        &parent
     };
     let mut lockfile = lock::resolve_path(
         &io.cwd,
-        &lock_base,
+        lock_base,
         options.lockfile.as_deref(),
         options.no_lockfile,
     )?;
 
     // Read the local skills.
     let directories_found = if options.recursive {
-        discover_skill_directories(&options.directory, options.follow_symlinks, io)?
+        discover_skill_directories(&options.directory, options.follow_symlinks, io).await?
     } else {
         vec![options.directory.clone()]
     };
     let mut skills: Vec<LocalSkill> = Vec::new();
-    let mut skipped: Vec<Map<String, Value>> = Vec::new();
-    let mut names: HashMap<String, PathBuf> = HashMap::new();
+    // The directory and the reason of each skill that could not be read.
+    let mut invalid: Vec<(PathBuf, String)> = Vec::new();
+    let mut names: HashMap<SkillName, PathBuf> = HashMap::new();
     for directory in directories_found {
-        let skill = match read_local_skill(&directory, options.follow_symlinks, &options.exclude) {
+        let read = read_local_skill(&directory, options.follow_symlinks, &options.exclude).await;
+        let skill = match read {
             Ok(skill) => skill,
             Err(ReadError::Invalid(error)) if options.recursive => {
-                skipped.push(skipped_invalid(&directory, &error.message, options.dry_run));
+                invalid.push((directory, error.message));
                 continue;
             }
             Err(error) => return Err(error.into()),
@@ -437,19 +497,25 @@ pub async fn run(
     // Recursive discovery can select the root itself; keep the lockfile outside its snapshot.
     let root_selected = skills
         .iter()
-        .map(|skill| skill.directory.clone())
-        .chain(
-            skipped
-                .iter()
-                .filter_map(|fields| fields["directory"].as_str().map(PathBuf::from)),
-        )
-        .any(|directory| directory == source || directory == options.directory);
+        .map(|skill| &skill.directory)
+        .chain(invalid.iter().map(|(directory, _)| directory))
+        .any(|directory| *directory == source || *directory == options.directory);
     if options.recursive && options.lockfile.is_none() && root_selected {
         lockfile = lock::resolve_path(&io.cwd, &parent, None, options.no_lockfile)?;
     }
+    let mut reports: Vec<Report> = invalid
+        .into_iter()
+        .map(|(directory, message)| Report::Invalid {
+            directory: directory.display().to_string(),
+            status: Status::Skipped,
+            reason: Reason::InvalidSkill,
+            message,
+            dry_run: options.dry_run,
+        })
+        .collect();
     if !json_output {
-        for fields in &skipped {
-            let _ = writeln!(io.stdout, "{}", format_result(&summary(fields), fields));
+        for report in &reports {
+            io.status(&report.text())?;
         }
     }
     let mut lock_state = match &lockfile {
@@ -460,29 +526,47 @@ pub async fn run(
         let targets: Vec<PathBuf> = skills.iter().map(|skill| skill.directory.clone()).collect();
         directories::validate(&io.cwd, &targets, lock_state, lockfile.as_deref())?;
     }
+    // The lock entry of every skill, before any request is sent.
+    let lock_paths = skills
+        .iter()
+        .map(|skill| {
+            lockfile
+                .as_deref()
+                .map(|lockfile| lock::key(lockfile, &skill.directory))
+                .transpose()
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    // Resolve every skill's remote version before publishing anything.
-    let mut remote = Remote::new(settings);
-    let mut plans = Vec::new();
-    for local in skills {
-        let previous = remote.fetch_latest_skill(&local.name).await?;
-        let changes = snapshot_changes(&local.files, previous.as_ref());
-        let unchanged = previous.is_some() && !changes.any();
-        plans.push(Plan {
-            local,
-            previous,
-            changes,
-            unchanged,
-        });
-    }
+    // Resolve every skill's remote version before publishing anything. The
+    // requests overlap; the plans keep the skills' order.
+    let remote = Remote::new(settings);
+    let plans: Vec<Plan> = stream::iter(skills.into_iter().zip(lock_paths))
+        .map(|(local, lock_path)| {
+            let remote = &remote;
+            async move {
+                let previous = remote.fetch_latest_skill(&local.name).await?;
+                let changes = snapshot_changes(&local.files, previous.as_ref());
+                let unchanged = previous.is_some() && !changes.any();
+                Ok::<_, CliError>(Plan {
+                    local,
+                    previous,
+                    changes,
+                    unchanged,
+                    lock_path,
+                })
+            }
+        })
+        .buffered(REQUEST_CONCURRENCY)
+        .try_collect()
+        .await?;
 
-    let mut results: Vec<Value> = skipped.iter().cloned().map(Value::Object).collect();
+    // Publish one skill at a time: each one is recorded before the next.
     let mut published: Vec<String> = Vec::new();
     for plan in &plans {
         let outcome = async {
-            let mut outcome = push_skill(&mut remote, &options, plan).await?;
+            let mut outcome = push_skill(&remote, &options, plan).await?;
             if let Outcome::Completed(completed) = &mut outcome {
-                if completed.status == "created" {
+                if completed.status == Status::Created {
                     published.push(format!("{}@{}", completed.name, completed.version));
                 }
                 if let Some(label) = &options.label
@@ -499,22 +583,18 @@ pub async fn run(
                         .set_skill_labels(&completed.name, completed.version, &labels)
                         .await?;
                     completed.labels = skill.labels;
-                    if completed.status == "unchanged" {
-                        completed.status = "labeled";
+                    if completed.status == Status::Unchanged {
+                        completed.status = Status::Labeled;
                     }
                 }
-                if let (Some(lock_state), Some(lockfile)) =
-                    (lock_state.as_mut(), lockfile.as_deref())
+                if let (Some(lock_state), Some(lockfile), Some(path)) =
+                    (lock_state.as_mut(), lockfile.as_deref(), &plan.lock_path)
                 {
-                    let key = to_slash(&relative(
-                        lockfile.parent().unwrap_or(Path::new("/")),
-                        &completed.directory,
-                    ));
                     lock::record(
                         lock_state,
                         lockfile,
                         LockedSkill {
-                            path: key,
+                            path: path.clone(),
                             name: completed.name.clone(),
                             selector: match &options.label {
                                 Some(label) => Selector::Label(label.clone()),
@@ -548,35 +628,29 @@ pub async fn run(
                 ),
             )
         })?;
-        let (value, text) = match outcome {
-            Outcome::Completed(completed) => (
-                completed.json(),
-                format_result(&completed.summary(), &completed.fields),
-            ),
-            Outcome::Other(fields) => {
-                let text = format_result(&summary(&fields), &fields);
-                (Value::Object(fields), text)
-            }
+        let report = match outcome {
+            Outcome::Completed(completed) => Report::from(completed),
+            Outcome::Other(report) => report,
         };
         if !json_output {
-            let _ = writeln!(io.stdout, "{text}");
+            io.status(&report.text())?;
         }
-        results.push(value);
+        reports.push(report);
     }
 
     if json_output {
-        let value = if options.recursive {
-            Value::Array(results)
+        let line = if options.recursive {
+            json_line(&reports)?
         } else {
-            results.into_iter().next().unwrap_or(Value::Null)
+            // One directory: its result alone, not a list.
+            json_line(&reports.first())?
         };
-        let _ = writeln!(io.stdout, "{}", escape_terminal_text(&value.to_string()));
-    } else if results.is_empty() {
-        let _ = writeln!(
-            io.stdout,
+        io.status(&escape_terminal_text(&line))?;
+    } else if reports.is_empty() {
+        io.status(&format!(
             "No skills found in {}",
             escape_terminal_text(&options.directory.display().to_string())
-        );
+        ))?;
     }
     Ok(Exit::Success)
 }

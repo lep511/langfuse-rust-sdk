@@ -2,10 +2,12 @@
 //! `client.skills` methods, plus the official CLI's validation of every
 //! response (exit 7 when a manifest does not match what was requested).
 
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use futures_util::stream::{self, StreamExt as _, TryStreamExt as _};
 use langfuse_rust_sdk::api::skills::{
     GetSkillParams, ListSkillsParams, SetSkillVersionLabelsRequest,
 };
@@ -18,24 +20,18 @@ use serde_json::Value;
 use crate::config::Settings;
 use crate::error::{CliError, Exit, Result, error_chain};
 use crate::skills::lock::Selector;
+use crate::skills::types::{SkillName, Version};
 
 /// Hashes per file-content request.
 pub const FILE_CONTENT_BATCH_SIZE: usize = 50;
 /// Pages of the skill list read before giving up.
 const MAX_SKILL_LIST_PAGES: i64 = 100;
-/// File-content requests in flight at once.
-const DOWNLOAD_CONCURRENCY: usize = 4;
+/// Requests of one kind in flight at once (manifests, file contents).
+pub const REQUEST_CONCURRENCY: usize = 4;
 
-/// `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
-pub fn is_skill_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.starts_with('-')
-        && !name.ends_with('-')
-        && !name.contains("--")
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-}
+const INVALID_MANIFEST: &str = "Langfuse returned an invalid skill manifest";
+const INVALID_LIST: &str = "Langfuse returned an invalid skill list";
+const INVALID_CONTENTS: &str = "Langfuse returned invalid skill file contents";
 
 /// A canonical base64 encoding of 32 bytes.
 pub fn is_sha256(value: &str) -> bool {
@@ -65,9 +61,9 @@ pub struct SkillFile {
 #[derive(Debug, Clone)]
 pub struct SkillVersion {
     /// Skill name.
-    pub name: String,
+    pub name: SkillName,
     /// Version number.
-    pub version: i64,
+    pub version: Version,
     /// Labels of the version.
     pub labels: Vec<String>,
     /// Manifest.
@@ -78,19 +74,38 @@ pub struct SkillVersion {
 #[derive(Debug, Clone)]
 pub struct SkillSummary {
     /// Skill name.
-    pub name: String,
+    pub name: SkillName,
     /// The version labelled `production`, if any.
-    pub production_version: Option<i64>,
+    pub production_version: Option<Version>,
 }
 
 /// The skills API of one connection.
+///
+/// Its methods take `&self`, so requests can run concurrently; the client is
+/// built once, at the first request.
 pub struct Remote {
     settings: Settings,
-    client: Option<LangfuseClient>,
+    client: OnceCell<LangfuseClient>,
+}
+
+impl std::fmt::Debug for Remote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The settings hold the secret key.
+        f.debug_struct("Remote")
+            .field("host", &self.settings.host)
+            .finish_non_exhaustive()
+    }
 }
 
 fn invalid(message: &str) -> CliError {
     CliError::response(message)
+}
+
+/// A rejected request for one skill version, kept apart from [`CliError`] so
+/// that "this skill does not exist" can be told from a failure.
+struct Rejected {
+    path: String,
+    error: Box<LangfuseError>,
 }
 
 impl Remote {
@@ -98,16 +113,17 @@ impl Remote {
     pub fn new(settings: Settings) -> Self {
         Self {
             settings,
-            client: None,
+            client: OnceCell::new(),
         }
     }
 
-    fn client(&mut self) -> Result<LangfuseClient> {
+    fn client(&self) -> Result<&LangfuseClient> {
         self.settings.require_credentials()?;
-        if self.client.is_none() {
-            self.client = Some(self.settings.client()?);
+        if let Some(client) = self.client.get() {
+            return Ok(client);
         }
-        Ok(self.client.clone().expect("client was just built"))
+        let client = self.settings.client()?;
+        Ok(self.client.get_or_init(|| client))
     }
 
     /// The error of a failed request: HTTP statuses are exit 5 with the
@@ -142,17 +158,11 @@ impl Remote {
         }
     }
 
-    /// [`failure`](Self::failure) of a GET from [`get`](Self::get).
-    fn failure_boxed(&self, failed: (String, LangfuseError), invalid_message: &str) -> CliError {
-        let (path, error) = failed;
-        self.failure("GET", &path, error, invalid_message)
-    }
-
     /// Every skill (optionally with `tag`), deduplicated by name.
-    pub async fn fetch_skills(&mut self, tag: Option<&str>) -> Result<Vec<SkillSummary>> {
+    pub async fn fetch_skills(&self, tag: Option<&str>) -> Result<Vec<SkillSummary>> {
         let client = self.client()?;
-        let mut order: Vec<String> = Vec::new();
-        let mut skills: HashMap<String, SkillSummary> = HashMap::new();
+        let mut order: Vec<SkillName> = Vec::new();
+        let mut skills: HashMap<SkillName, SkillSummary> = HashMap::new();
         for page in 1..=MAX_SKILL_LIST_PAGES {
             let params = ListSkillsParams {
                 page: Some(page),
@@ -160,32 +170,27 @@ impl Remote {
                 tag: tag.map(str::to_owned),
                 ..ListSkillsParams::default()
             };
-            let path = format!(
-                "/api/public/skills?{}",
-                serde_urlencoded::to_string(&params).unwrap_or_default()
-            );
             let response = client.skills.list(&params).await.map_err(|error| {
-                self.failure(
-                    "GET",
-                    &path,
-                    error,
-                    "Langfuse returned an invalid skill list",
-                )
+                let path = format!(
+                    "/api/public/skills?{}",
+                    serde_urlencoded::to_string(&params).unwrap_or_default()
+                );
+                self.failure("GET", &path, error, INVALID_LIST)
             })?;
             for skill in response.data {
-                if !is_skill_name(&skill.name)
-                    || skill.production_version.is_some_and(|version| version <= 0)
-                {
-                    return Err(invalid("Langfuse returned an invalid skill list"));
-                }
-                if !skills.contains_key(&skill.name) {
-                    order.push(skill.name.clone());
+                let name = SkillName::new(skill.name).ok_or_else(|| invalid(INVALID_LIST))?;
+                let production_version = skill
+                    .production_version
+                    .map(|version| Version::new(version).ok_or_else(|| invalid(INVALID_LIST)))
+                    .transpose()?;
+                if !skills.contains_key(&name) {
+                    order.push(name.clone());
                 }
                 skills.insert(
-                    skill.name.clone(),
+                    name.clone(),
                     SkillSummary {
-                        name: skill.name,
-                        production_version: skill.production_version,
+                        name,
+                        production_version,
                     },
                 );
             }
@@ -202,74 +207,68 @@ impl Remote {
     }
 
     async fn get(
-        &mut self,
-        name: &str,
+        &self,
+        name: &SkillName,
         selector: &Selector,
-    ) -> std::result::Result<SdkSkillVersion, Box<(String, LangfuseError)>> {
+    ) -> Result<std::result::Result<SdkSkillVersion, Rejected>> {
+        let client = self.client()?;
         let params = match selector {
             Selector::Label(label) => GetSkillParams {
                 label: Some(label.clone()),
                 ..GetSkillParams::default()
             },
             Selector::Version(version) => GetSkillParams {
-                version: Some(*version),
+                version: Some(version.get()),
                 ..GetSkillParams::default()
             },
         };
-        let path = format!(
-            "/api/public/skills/{}?{}",
-            crate::operation::encode_segment(name),
-            serde_urlencoded::to_string(&params).unwrap_or_default()
-        );
-        let client = match self.client() {
-            Ok(client) => client,
-            Err(error) => return Err(Box::new((path, LangfuseError::Config(error.message)))),
-        };
-        client
+        Ok(client
             .skills
-            .get(name, &params)
+            .get(name.as_str(), &params)
             .await
-            .map_err(|error| Box::new((path, error)))
+            .map_err(|error| Rejected {
+                path: format!(
+                    "/api/public/skills/{}?{}",
+                    crate::operation::encode_segment(name.as_str()),
+                    serde_urlencoded::to_string(&params).unwrap_or_default()
+                ),
+                error: Box::new(error),
+            }))
+    }
+
+    fn rejected(&self, rejected: Rejected) -> CliError {
+        self.failure("GET", &rejected.path, *rejected.error, INVALID_MANIFEST)
     }
 
     /// The version `selector` names; exit 7 unless it matches.
-    pub async fn fetch_skill(&mut self, name: &str, selector: &Selector) -> Result<SkillVersion> {
-        self.settings.require_credentials()?;
-        match self.get(name, selector).await {
+    pub async fn fetch_skill(&self, name: &SkillName, selector: &Selector) -> Result<SkillVersion> {
+        match self.get(name, selector).await? {
             Ok(skill) => parse_skill_version(skill, name, Some(selector)),
-            Err(failed) => {
-                Err(self.failure_boxed(*failed, "Langfuse returned an invalid skill manifest"))
-            }
+            Err(rejected) => Err(self.rejected(rejected)),
         }
     }
 
     /// The `latest` version, or `None` when the skill does not exist.
-    pub async fn fetch_latest_skill(&mut self, name: &str) -> Result<Option<SkillVersion>> {
-        self.settings.require_credentials()?;
+    pub async fn fetch_latest_skill(&self, name: &SkillName) -> Result<Option<SkillVersion>> {
         let selector = Selector::Label("latest".to_owned());
-        match self.get(name, &selector).await {
+        match self.get(name, &selector).await? {
             Ok(skill) => parse_skill_version(skill, name, Some(&selector)).map(Some),
-            Err(failed) if is_resource_not_found(&failed.1) => Ok(None),
-            Err(failed) => {
-                Err(self.failure_boxed(*failed, "Langfuse returned an invalid skill manifest"))
-            }
+            Err(rejected) if is_resource_not_found(&rejected.error) => Ok(None),
+            Err(rejected) => Err(self.rejected(rejected)),
         }
     }
 
     /// Publish a new version from `files` (path, content).
-    pub async fn create_skill_version(
-        &mut self,
-        name: &str,
-        files: &[(String, String)],
+    pub async fn create_skill_version<'a>(
+        &self,
+        name: &SkillName,
+        files: impl Iterator<Item = (&'a str, &'a str)>,
         commit_message: Option<&str>,
     ) -> Result<SkillVersion> {
         let client = self.client()?;
         let request = CreateSkillVersionRequest {
             files: files
-                .iter()
-                .map(|(path, content)| {
-                    SkillVersionFileCreateInput::content(path.clone(), content.clone())
-                })
+                .map(|(path, content)| SkillVersionFileCreateInput::content(path, content))
                 .collect(),
             commit_message: commit_message.map(str::to_owned),
         };
@@ -277,46 +276,31 @@ impl Remote {
             .skills
             .create_version(&request)
             .await
-            .map_err(|error| {
-                self.failure(
-                    "POST",
-                    "/api/public/skills",
-                    error,
-                    "Langfuse returned an invalid skill manifest",
-                )
-            })?;
+            .map_err(|error| self.failure("POST", "/api/public/skills", error, INVALID_MANIFEST))?;
         parse_skill_version(skill, name, None)
     }
 
     /// Replace the labels of a version; exit 7 unless the response has them.
     pub async fn set_skill_labels(
-        &mut self,
-        name: &str,
-        version: i64,
+        &self,
+        name: &SkillName,
+        version: Version,
         labels: &[String],
     ) -> Result<SkillVersion> {
         let client = self.client()?;
-        let path = format!(
-            "/api/public/skills/{}/versions/{version}",
-            crate::operation::encode_segment(name)
-        );
+        let request = SetSkillVersionLabelsRequest {
+            labels: labels.to_vec(),
+        };
         let skill = client
             .skills
-            .set_version_labels(
-                name,
-                version,
-                &SetSkillVersionLabelsRequest {
-                    labels: labels.to_vec(),
-                },
-            )
+            .set_version_labels(name.as_str(), version.get(), &request)
             .await
             .map_err(|error| {
-                self.failure(
-                    "PATCH",
-                    &path,
-                    error,
-                    "Langfuse returned an invalid skill manifest",
-                )
+                let path = format!(
+                    "/api/public/skills/{}/versions/{version}",
+                    crate::operation::encode_segment(name.as_str())
+                );
+                self.failure("PATCH", &path, error, INVALID_MANIFEST)
             })?;
         let skill = parse_skill_version(skill, name, None)?;
         if skill.version != version || labels.iter().any(|label| !skill.labels.contains(label)) {
@@ -328,22 +312,11 @@ impl Remote {
     }
 
     /// The contents of every hash, in batches fetched concurrently.
-    pub async fn fetch_all_contents(
-        &mut self,
-        hashes: &[String],
-    ) -> Result<HashMap<String, String>> {
-        use futures_util::stream::{self, StreamExt, TryStreamExt};
+    pub async fn fetch_all_contents(&self, hashes: &[String]) -> Result<HashMap<String, String>> {
         let client = self.client()?;
-        let settings = self.settings.clone();
-        let batches: Vec<Vec<String>> = hashes
-            .chunks(FILE_CONTENT_BATCH_SIZE)
-            .map(<[String]>::to_vec)
-            .collect();
-        let maps: Vec<HashMap<String, String>> = stream::iter(batches)
-            .map(|batch| {
-                let client = client.clone();
-                let settings = settings.clone();
-                async move {
+        let maps: Vec<HashMap<String, String>> =
+            stream::iter(hashes.chunks(FILE_CONTENT_BATCH_SIZE))
+                .map(|batch| async move {
                     let refs: Vec<&str> = batch.iter().map(String::as_str).collect();
                     let response =
                         client
@@ -351,25 +324,24 @@ impl Remote {
                             .get_file_contents(&refs)
                             .await
                             .map_err(|error| {
-                                Remote::new(settings).failure(
+                                self.failure(
                                     "GET",
                                     "/api/public/skills/files/content",
                                     error,
-                                    "Langfuse returned invalid skill file contents",
+                                    INVALID_CONTENTS,
                                 )
                             })?;
                     check_contents(
-                        &batch,
+                        batch,
                         response
                             .data
                             .into_iter()
                             .map(|entry| (entry.sha256_hash, entry.content)),
                     )
-                }
-            })
-            .buffered(DOWNLOAD_CONCURRENCY)
-            .try_collect()
-            .await?;
+                })
+                .buffered(REQUEST_CONCURRENCY)
+                .try_collect()
+                .await?;
         Ok(maps.into_iter().flatten().collect())
     }
 }
@@ -382,7 +354,7 @@ fn check_contents(
     let mut contents = HashMap::new();
     for (hash, content) in entries {
         if !is_sha256(&hash) || !wanted.contains(hash.as_str()) || contents.contains_key(&hash) {
-            return Err(invalid("Langfuse returned invalid skill file contents"));
+            return Err(invalid(INVALID_CONTENTS));
         }
         contents.insert(hash, content);
     }
@@ -405,54 +377,48 @@ fn is_resource_not_found(error: &LangfuseError) -> bool {
             || body.get("error").and_then(Value::as_str) == Some("LangfuseNotFoundError"))
 }
 
-/// Validate a manifest: a valid name equal to `name`, a positive version, at
+/// Validate a manifest: the name that was asked for, a positive version, at
 /// least one file, canonical hashes, unique paths, and the requested selector.
 fn parse_skill_version(
     skill: SdkSkillVersion,
-    name: &str,
+    name: &SkillName,
     selector: Option<&Selector>,
 ) -> Result<SkillVersion> {
-    let manifest = "Langfuse returned an invalid skill manifest";
-    if !is_skill_name(&skill.name)
-        || skill.name != name
-        || skill.version <= 0
-        || skill.files.is_empty()
-    {
-        return Err(invalid(manifest));
+    let version = Version::new(skill.version).ok_or_else(|| invalid(INVALID_MANIFEST))?;
+    if skill.name != name.as_str() || skill.files.is_empty() {
+        return Err(invalid(INVALID_MANIFEST));
     }
     let mut paths = HashSet::new();
     let mut files = Vec::with_capacity(skill.files.len());
     for file in skill.files {
-        if !is_sha256(&file.sha256_hash)
-            || file.content_length < 0
-            || !paths.insert(file.path.clone())
-        {
-            return Err(invalid(manifest));
+        let content_length =
+            u64::try_from(file.content_length).map_err(|_| invalid(INVALID_MANIFEST))?;
+        if !is_sha256(&file.sha256_hash) || !paths.insert(file.path.clone()) {
+            return Err(invalid(INVALID_MANIFEST));
         }
         files.push(SkillFile {
             path: file.path,
             sha256_hash: file.sha256_hash,
-            content_length: file.content_length as u64,
+            content_length,
         });
     }
     match selector {
-        Some(Selector::Version(version)) if skill.version != *version => {
+        Some(Selector::Version(requested)) if version != *requested => {
             return Err(invalid(&format!(
-                "Requested {name}@{version}; server returned version {}",
-                skill.version
+                "Requested {name}@{requested}; server returned version {version}"
             )));
         }
         Some(Selector::Label(label)) if !skill.labels.contains(label) => {
             return Err(invalid(&format!(
                 "Requested {name}@{label}; server returned labels {}",
-                Value::from(skill.labels.clone())
+                Value::from(skill.labels.as_slice())
             )));
         }
         _ => {}
     }
     Ok(SkillVersion {
-        name: skill.name,
-        version: skill.version,
+        name: name.clone(),
+        version,
         labels: skill.labels,
         files,
     })
@@ -463,13 +429,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_and_hashes() {
-        for valid in ["a", "a1", "my-skill", "x-1-y"] {
-            assert!(is_skill_name(valid), "{valid}");
-        }
-        for invalid in ["", "-a", "a-", "a--b", "A", "a_b", "a b", "ñ"] {
-            assert!(!is_skill_name(invalid), "{invalid}");
-        }
+    fn hashes() {
         let hash = sha256_base64(b"hello");
         assert!(is_sha256(&hash));
         assert!(!is_sha256("aGVsbG8="));

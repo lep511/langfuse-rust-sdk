@@ -61,7 +61,7 @@ impl Operation for Create {
             f.object_id.clone().unwrap_or_default(),
             f.content.clone().unwrap_or_default(),
         );
-        comment.author_user_id = f.author_user_id.clone();
+        comment.author_user_id.clone_from(&f.author_user_id);
         request.body_from(&comment)
     }
 }

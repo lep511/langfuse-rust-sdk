@@ -3,17 +3,20 @@
 //! never Git metadata.
 
 use std::collections::HashSet;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use serde::{Serialize, Serializer};
+use tokio::io::AsyncReadExt as _;
+use tokio::process::Command;
 
 use crate::error::{CliError, Result};
 use crate::skills::paths::{contains, relative, to_slash};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
-const GIT_MAX_OUTPUT: usize = 16 * 1024 * 1024;
+const GIT_MAX_OUTPUT: u64 = 16 * 1024 * 1024;
 
 /// Why a path is not published.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +37,12 @@ impl Exclusion {
             Exclusion::Exclude => "exclude",
             Exclusion::GitMetadata => "git-metadata",
         }
+    }
+}
+
+impl Serialize for Exclusion {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -59,7 +68,10 @@ fn has_git_metadata(directory: &Path) -> std::io::Result<bool> {
 
 /// The selection for `directory`, reusing `parent`'s unless `directory`
 /// starts a nested checkout.
-pub fn read_git_selection(directory: &Path, parent: Option<&GitSelection>) -> Result<GitSelection> {
+pub async fn read_git_selection(
+    directory: &Path,
+    parent: Option<&GitSelection>,
+) -> Result<GitSelection> {
     let fail = |error: &dyn std::fmt::Display| git_error(directory, error);
     if let Some(parent) = parent
         && contains(&parent.directory, directory)
@@ -79,7 +91,9 @@ pub fn read_git_selection(directory: &Path, parent: Option<&GitSelection>) -> Re
             }
         }
     }
-    let output = git_ls_files(directory).map_err(|error| fail(&error))?;
+    let output = git_ls_files(directory)
+        .await
+        .map_err(|error| fail(&error))?;
     let mut paths = HashSet::new();
     for path in output.split('\0').filter(|path| !path.is_empty()) {
         let segments: Vec<&str> = path.trim_end_matches('/').split('/').collect();
@@ -93,7 +107,11 @@ pub fn read_git_selection(directory: &Path, parent: Option<&GitSelection>) -> Re
     })
 }
 
-fn git_ls_files(directory: &Path) -> std::result::Result<String, String> {
+/// `git ls-files` below `directory`: NUL-separated paths.
+///
+/// The child is killed when this future is dropped, which is how the timeout
+/// ends it; its output is read while it runs, so a full pipe cannot stall it.
+async fn git_ls_files(directory: &Path) -> std::result::Result<String, String> {
     let mut command = Command::new("git");
     command
         .args([
@@ -111,56 +129,41 @@ fn git_ls_files(directory: &Path) -> std::result::Result<String, String> {
         .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     // Inspect this checkout even when invoked from a Git hook.
     for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
+        if key.as_encoded_bytes().starts_with(b"GIT_") {
             command.env_remove(key);
         }
     }
     command.env("GIT_OPTIONAL_LOCKS", "0");
     let mut child = command.spawn().map_err(|error| error.to_string())?;
-    let mut stdout = child.stdout.take().ok_or("no stdout")?;
+    let stdout = child.stdout.take().ok_or("no stdout")?;
     let mut stderr = child.stderr.take().ok_or("no stderr")?;
-    let reader = std::thread::spawn(move || {
-        let mut buffer = Vec::new();
-        let result = (&mut stdout)
-            .take(GIT_MAX_OUTPUT as u64 + 1)
-            .read_to_end(&mut buffer);
-        result.map(|_| buffer)
-    });
-    let errors = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stderr.read_to_string(&mut text);
-        text
-    });
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait().map_err(|error| error.to_string())? {
-            Some(status) => break status,
-            None if started.elapsed() > GIT_TIMEOUT => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "git ls-files timed out after {}s",
-                    GIT_TIMEOUT.as_secs()
-                ));
-            }
-            None => std::thread::sleep(Duration::from_millis(5)),
+
+    let run = async {
+        let mut bytes = Vec::new();
+        let mut errors = String::new();
+        // Past the limit the pipe is closed, which stops Git.
+        let output = async {
+            stdout
+                .take(GIT_MAX_OUTPUT + 1)
+                .read_to_end(&mut bytes)
+                .await
+        };
+        let (read, _) = tokio::join!(output, stderr.read_to_string(&mut errors));
+        read.map_err(|error| error.to_string())?;
+        let status = child.wait().await.map_err(|error| error.to_string())?;
+        if !status.success() {
+            return Err(format!("git ls-files failed ({status}): {}", errors.trim()));
         }
+        Ok(bytes)
     };
-    let bytes = reader
-        .join()
-        .map_err(|_| "git output reader panicked".to_owned())?
-        .map_err(|error| error.to_string())?;
-    let stderr_text = errors.join().unwrap_or_default();
-    if !status.success() {
-        return Err(format!(
-            "git ls-files failed ({status}): {}",
-            stderr_text.trim()
-        ));
-    }
-    if bytes.len() > GIT_MAX_OUTPUT {
+    let bytes = tokio::time::timeout(GIT_TIMEOUT, run)
+        .await
+        .map_err(|_| format!("git ls-files timed out after {}s", GIT_TIMEOUT.as_secs()))??;
+    if u64::try_from(bytes.len()).is_ok_and(|length| length > GIT_MAX_OUTPUT) {
         return Err("git ls-files output exceeds 16 MiB".to_owned());
     }
     String::from_utf8(bytes).map_err(|_| "git ls-files printed a non-UTF-8 path".to_owned())
@@ -168,10 +171,10 @@ fn git_ls_files(directory: &Path) -> std::result::Result<String, String> {
 
 /// Whether Git ignores `path` (absolute) in `selection`.
 pub fn git_excludes(selection: &GitSelection, path: &Path) -> bool {
-    selection
-        .paths
-        .as_ref()
-        .is_some_and(|paths| !paths.contains(&to_slash(&relative(&selection.directory, path))))
+    selection.paths.as_ref().is_some_and(|paths| {
+        // Git's list is text: a path that is not UTF-8 is not in it.
+        to_slash(&relative(&selection.directory, path)).is_none_or(|path| !paths.contains(&path))
+    })
 }
 
 /// Validate `--exclude` values: relative paths, `./` and trailing `/` dropped.

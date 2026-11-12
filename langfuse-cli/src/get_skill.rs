@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::error::{CliError, Exit, Result, error_chain};
+use crate::error::{Exit, Result, error_chain};
 use crate::output::Io;
 
 /// Where the latest Langfuse skill is published.
@@ -41,9 +41,7 @@ pub async fn run(io: &mut Io<'_>) -> Result<Exit> {
 pub async fn run_from(url: &str, io: &mut Io<'_>) -> Result<Exit> {
     match fetch(url).await {
         Ok(text) => {
-            io.stdout.write_all(text.as_bytes()).map_err(|error| {
-                CliError::new(Exit::Internal, format!("Cannot write to stdout: {error}"))
-            })?;
+            io.out(text.as_bytes())?;
             Ok(Exit::Success)
         }
         Err(reason) => {

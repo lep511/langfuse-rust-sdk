@@ -125,14 +125,12 @@ impl Settings {
 
     /// The SDK's low-level HTTP client (auth, retries, errors) used by `api`.
     pub fn http_client(&self) -> Result<HttpClient> {
-        let config = self.builder().build().map_err(CliError::from)?;
-        HttpClient::new(config).map_err(CliError::from)
+        Ok(HttpClient::new(self.builder().build()?)?)
     }
 
     /// The SDK's typed client, used by `skills` and `api versions detect`.
     pub fn client(&self) -> Result<LangfuseClient> {
-        let config = self.builder().build().map_err(CliError::from)?;
-        LangfuseClient::new(config).map_err(CliError::from)
+        Ok(LangfuseClient::new(self.builder().build()?)?)
     }
 }
 

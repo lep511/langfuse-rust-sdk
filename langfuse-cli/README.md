@@ -169,6 +169,11 @@ piped or redirected it is plain JSON, byte for byte the official CLI's format.
 | 6 | Local file failure |
 | 7 | Invalid or inconsistent API response |
 
+A reader that closes the pipe (`langfuse api … | head`) is not a failure: a
+command that only prints ends quietly with exit 0 and stops sending requests,
+and a `skills` command finishes its work. A write to stdout that fails for any
+other reason, such as a full disk behind a redirection, is exit 1.
+
 ## Skills
 
 ```sh

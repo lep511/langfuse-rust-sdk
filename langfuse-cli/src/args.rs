@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 use clap::Args;
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use langfuse_rust_sdk::pagination::{CursorParams, PageParams};
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -54,11 +56,35 @@ pub fn tri_state(flag: Option<bool>, negated: bool) -> Option<bool> {
     if negated { Some(false) } else { flag }
 }
 
-/// Deserialize a CLI string into one of the SDK's wire enums
-/// (`"TRACE"` → `CommentObjectType::Trace`).
-pub fn wire_enum<T: DeserializeOwned>(flag: &str, value: &str) -> Result<T> {
-    serde_json::from_value(Value::String(value.to_owned()))
-        .map_err(|_| CliError::usage(format!("--{flag}: unsupported value {value}")))
+/// The parser of a flag whose values are those of one of the SDK's wire enums
+/// (`"TRACE"` → `AnnotationQueueObjectType::Trace`): clap lists and checks
+/// `values`, and the flag has the enum's type, so nothing is converted later.
+///
+/// The SDK's enums read an unknown string as `Unknown`, which cannot be sent;
+/// a listed value that is not a variant is therefore rejected here, by
+/// checking that it serializes back to itself.
+pub fn wire<T>(values: &'static [&'static str]) -> impl TypedValueParser<Value = T>
+where
+    T: DeserializeOwned + Serialize + Clone + Send + Sync + 'static,
+{
+    PossibleValuesParser::new(values).try_map(|text: String| {
+        let value = Value::String(text);
+        let parsed: T = serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+        match serde_json::to_value(&parsed) {
+            Ok(sent) if sent == value => Ok(parsed),
+            _ => Err(format!("{value} is not a value the API accepts")),
+        }
+    })
+}
+
+/// The value of a flag that clap requires unless the body comes from
+/// `--body-json` / `--body-file`.
+pub fn required<T>(flag: &str, value: Option<T>) -> Result<T> {
+    value.ok_or_else(|| {
+        CliError::usage(format!(
+            "--{flag} is required to build the body from field flags"
+        ))
+    })
 }
 
 /// Expand the values of a repeatable array flag: a value that is a JSON array
@@ -316,6 +342,36 @@ mod tests {
         assert!(date_time("yesterday").is_err());
         assert_eq!(tri_state(Some(true), true), Some(false));
         assert_eq!(tri_state(None, false), None);
+    }
+
+    #[test]
+    fn wire_flags_have_the_type_of_the_sdk_enum() {
+        use langfuse_rust_sdk::models::annotation_queues::AnnotationQueueStatus;
+        let command = clap::Command::new("test").arg(
+            clap::Arg::new("status")
+                .long("status")
+                .value_parser(wire::<AnnotationQueueStatus>(&["PENDING", "ARCHIVED"])),
+        );
+        let parse = |value: &str| {
+            command
+                .clone()
+                .try_get_matches_from(["test", "--status", value])
+                .map(|matches| matches.get_one::<AnnotationQueueStatus>("status").copied())
+        };
+        assert_eq!(
+            parse("PENDING").unwrap(),
+            Some(AnnotationQueueStatus::Pending)
+        );
+        // Not listed.
+        assert!(parse("COMPLETED").is_err());
+        // Listed, but not a variant: the SDK would read it as `Unknown`.
+        let error = parse("ARCHIVED").unwrap_err().to_string();
+        assert!(error.contains("is not a value the API accepts"), "{error}");
+        assert_eq!(required("status", Some(1)).unwrap(), 1);
+        assert_eq!(
+            required::<i32>("status", None).unwrap_err().message,
+            "--status is required to build the body from field flags"
+        );
     }
 
     #[test]

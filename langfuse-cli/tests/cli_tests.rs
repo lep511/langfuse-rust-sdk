@@ -2,8 +2,10 @@
 
 mod common;
 
-use common::run;
-use langfuse_rust_cli::error::Exit;
+use std::io::ErrorKind;
+
+use common::{FailingStdout, run, run_on};
+use langfuse_rust_cli::Exit;
 
 #[test]
 fn command_tree_is_consistent() {
@@ -174,4 +176,116 @@ async fn completions_are_generated() {
     let output = run(&["completions", "bash"]).await;
     assert_eq!(output.exit, Exit::Success);
     assert!(output.stdout.contains("langfuse"));
+}
+
+/// Commands that only print: the arguments of each.
+fn printing_commands() -> Vec<Vec<&'static str>> {
+    vec![
+        vec!["--help"],
+        vec!["--version"],
+        vec!["completions", "bash"],
+        vec!["--json", "api", "schema"],
+        vec!["api", "schema"],
+        vec!["api", "versions"],
+        vec![
+            "api",
+            "prompts",
+            "list",
+            "--curl",
+            "--public-key",
+            "pk",
+            "--secret-key",
+            "sk",
+        ],
+    ]
+}
+
+#[tokio::test]
+async fn a_closed_stdout_ends_the_command_quietly() {
+    let cwd = std::env::current_dir().unwrap();
+    for args in printing_commands() {
+        let mut stdout = FailingStdout(ErrorKind::BrokenPipe);
+        let (exit, stderr) = run_on(&cwd, &mut stdout, &args).await;
+        assert_eq!(exit, Exit::Success, "{args:?}: {stderr}");
+        assert_eq!(stderr, "", "{args:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_failed_write_to_stdout_is_exit_1() {
+    let cwd = std::env::current_dir().unwrap();
+    for args in printing_commands() {
+        let mut stdout = FailingStdout(ErrorKind::Other);
+        let (exit, stderr) = run_on(&cwd, &mut stdout, &args).await;
+        assert_eq!(exit, Exit::Internal, "{args:?}: {stderr}");
+        assert_eq!(
+            stderr, "Cannot write to stdout: stdout failed\n",
+            "{args:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_panic_is_exit_1() {
+    struct Panicking;
+    impl std::io::Write for Panicking {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            panic!("a bug (expected by this test)");
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let cwd = std::env::current_dir().unwrap();
+    let (exit, _) = run_on(&cwd, &mut Panicking, &["completions", "bash"]).await;
+    assert_eq!(exit, Exit::Internal);
+}
+
+#[tokio::test]
+async fn schema_text_has_no_colours_unless_asked() {
+    let output = run(&["api", "schema"]).await;
+    assert_eq!(output.exit, Exit::Success);
+    assert!(!output.stdout.contains('\x1b'), "{}", output.stdout);
+    assert!(
+        output
+            .stdout
+            .ends_with("Pass --json for the machine-readable schema.\n")
+    );
+    let output = run(&["--color", "always", "api", "schema"]).await;
+    assert!(output.stdout.contains('\x1b'));
+}
+
+/// A stdout that takes every write and fails when flushed, like a buffered
+/// stream whose device is full.
+struct FailingFlush(ErrorKind);
+
+impl std::io::Write for FailingFlush {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::new(self.0, "flush failed"))
+    }
+}
+
+#[tokio::test]
+async fn a_failed_flush_of_stdout_is_a_failed_write() {
+    let cwd = std::env::current_dir().unwrap();
+    let mut stdout = FailingFlush(ErrorKind::Other);
+    let (exit, stderr) = run_on(&cwd, &mut stdout, &["api", "versions"]).await;
+    assert_eq!(exit, Exit::Internal);
+    assert_eq!(stderr, "Cannot write to stdout: flush failed\n");
+
+    let mut stdout = FailingFlush(ErrorKind::BrokenPipe);
+    let (exit, stderr) = run_on(&cwd, &mut stdout, &["api", "versions"]).await;
+    assert_eq!(exit, Exit::Success);
+    assert_eq!(stderr, "");
+
+    // An earlier failure keeps its own exit code and message.
+    let mut stdout = FailingFlush(ErrorKind::Other);
+    let (exit, stderr) = run_on(&cwd, &mut stdout, &["api", "nope"]).await;
+    assert_eq!(exit, Exit::Usage);
+    assert!(!stderr.contains("Cannot write to stdout"), "{stderr}");
 }

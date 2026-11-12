@@ -27,6 +27,40 @@ fn as_number(value: Option<&Value>) -> Option<f64> {
     }
 }
 
+/// A number of pages or items as an integer. The official CLI computes with
+/// JavaScript numbers, hence the `f64`; the conversion saturates, which is
+/// what a counter far beyond any real list should do.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "saturating on purpose: the value is a counter"
+)]
+fn whole(value: f64) -> i64 {
+    value as i64
+}
+
+/// Take a list response apart into its items and its `meta` (or
+/// `pagination`) object. Anything else is left untouched.
+///
+/// The page is moved out rather than cloned: once its items are collected or
+/// streamed, nothing reads that body again.
+fn take_list(body: &mut Option<Value>) -> Option<(Vec<Value>, Map<String, Value>)> {
+    let record = body.as_mut()?.as_object_mut()?;
+    if !record.get("data")?.is_array() {
+        return None;
+    }
+    let Some(Value::Array(data)) = record.remove("data") else {
+        return None;
+    };
+    let meta = match record
+        .remove("meta")
+        .or_else(|| record.remove("pagination"))
+    {
+        Some(Value::Object(meta)) => meta,
+        _ => Map::new(),
+    };
+    Some((data, meta))
+}
+
 /// Fetch every page of `request`, up to `max_items` items and [`MAX_PAGES`]
 /// requests. With `stream`, items are written as NDJSON as they arrive and
 /// the returned result has no body.
@@ -48,10 +82,9 @@ pub async fn all_pages(
     if pagination == Pagination::Page && request.query_value("page").is_none() {
         request.set_query("page", "1");
     }
-    let mut last: Option<ApiResult>;
 
-    loop {
-        let result = execute(http, settings, &request).await?;
+    let last = loop {
+        let mut result = execute(http, settings, &request).await?;
         if !result.ok {
             if pages > 0 {
                 notice(
@@ -65,26 +98,13 @@ pub async fn all_pages(
             return Ok(result);
         }
         pages += 1;
-        let record = result.body.as_ref().and_then(Value::as_object).cloned();
-        let data = record
-            .as_ref()
-            .and_then(|record| record.get("data"))
-            .and_then(Value::as_array)
-            .cloned();
         // Not a list response: behave like a single call.
-        let Some(data) = data else {
+        let Some((data, meta)) = take_list(&mut result.body) else {
             if pages == 1 {
                 return Ok(result);
             }
-            last = Some(result);
-            break;
+            break result;
         };
-        let meta = record
-            .as_ref()
-            .and_then(|record| record.get("meta").or_else(|| record.get("pagination")))
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
 
         let page_len = data.len();
         let take = page_len.min(max_items.saturating_sub(fetched));
@@ -116,14 +136,13 @@ pub async fn all_pages(
                 }
                 match (page, total_pages) {
                     (Some(page), Some(total_pages)) if page < total_pages => {
-                        request.set_query("page", format!("{}", page as i64 + 1));
+                        request.set_query("page", whole(page).saturating_add(1).to_string());
                         true
                     }
                     _ => false,
                 }
             }
         };
-        last = Some(result);
 
         if fetched + page_len >= max_items {
             truncated = has_more || fetched + page_len > max_items;
@@ -136,11 +155,11 @@ pub async fn all_pages(
                     ),
                 );
             }
-            break;
+            break result;
         }
         fetched += take;
         if !has_more {
-            break;
+            break result;
         }
         if pages >= MAX_PAGES {
             truncated = true;
@@ -150,14 +169,13 @@ pub async fn all_pages(
                     "--all stopped after {MAX_PAGES} requests with {fetched} item(s); raise --limit for larger pages or --max-items to continue"
                 ),
             );
-            break;
+            break result;
         }
         if let Some(cursor) = next_cursor {
             request.set_query("cursor", cursor);
         }
-    }
+    };
 
-    let last = last.expect("at least one page was fetched");
     if stream {
         return Ok(ApiResult { body: None, ..last });
     }
@@ -166,7 +184,7 @@ pub async fn all_pages(
     meta.insert("fetchedItems".into(), Value::from(fetched));
     if let Some(total) = total_items {
         let total = if total.fract() == 0.0 {
-            Value::from(total as i64)
+            Value::from(whole(total))
         } else {
             Value::from(total)
         };

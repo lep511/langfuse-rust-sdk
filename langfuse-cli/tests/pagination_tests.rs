@@ -3,7 +3,7 @@
 mod common;
 
 use common::{api, json, query_pairs};
-use langfuse_rust_cli::error::Exit;
+use langfuse_rust_cli::Exit;
 use serde_json::json;
 use wiremock::matchers::{method, query_param};
 use wiremock::{Mock, MockServer};
@@ -154,4 +154,18 @@ async fn requests_are_capped_at_100() {
             .stderr
             .starts_with("--all stopped after 100 requests with 100 item(s)")
     );
+}
+
+#[tokio::test]
+async fn a_closed_stdout_stops_the_stream_and_the_requests() {
+    let server = page_server(3, 2).await;
+    let connection = common::connection(&server);
+    let mut args: Vec<&str> = connection.iter().map(String::as_str).collect();
+    args.extend(["api", "models", "list", "--all", "--format", "ndjson"]);
+    let mut stdout = common::FailingStdout(std::io::ErrorKind::BrokenPipe);
+    let cwd = std::env::current_dir().unwrap();
+    let (exit, stderr) = common::run_on(&cwd, &mut stdout, &args).await;
+    assert_eq!(exit, Exit::Success, "{stderr}");
+    assert_eq!(stderr, "");
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }

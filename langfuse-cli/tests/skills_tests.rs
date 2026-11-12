@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
-use langfuse_rust_cli::error::Exit;
+use langfuse_rust_cli::Exit;
 use serde_json::{Value, json};
 use sha2::Digest as _;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
@@ -842,24 +842,21 @@ async fn get_skill_prints_the_file_or_explains_the_failure() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut stdin: &[u8] = b"";
-    let mut io = langfuse_rust_cli::output::Io {
+    let mut io = langfuse_rust_cli::Io {
         stdout: &mut stdout,
         stderr: &mut stderr,
         stdin: &mut stdin,
         stdout_tty: false,
         stderr_tty: false,
         width: None,
+        color_allowed: true,
         cwd: std::env::current_dir().unwrap(),
     };
     let exit =
-        langfuse_rust_cli::get_skill::run_from(&format!("{}/SKILL.md", server.uri()), &mut io)
-            .await
-            .unwrap();
+        langfuse_rust_cli::get_skill_from(&format!("{}/SKILL.md", server.uri()), &mut io).await;
     assert_eq!(exit, Exit::Success);
     let exit =
-        langfuse_rust_cli::get_skill::run_from(&format!("{}/missing.md", server.uri()), &mut io)
-            .await
-            .unwrap();
+        langfuse_rust_cli::get_skill_from(&format!("{}/missing.md", server.uri()), &mut io).await;
     assert_eq!(exit, Exit::Network);
     assert_eq!(String::from_utf8(stdout).unwrap(), "# Langfuse\n");
     let stderr = String::from_utf8(stderr).unwrap();
@@ -870,5 +867,410 @@ async fn get_skill_prints_the_file_or_explains_the_failure() {
     assert!(
         stderr.contains("Original error: Failed to fetch skill from"),
         "{stderr}"
+    );
+}
+
+/// A path as it appears inside the JSON output.
+fn quoted(path: &Path) -> String {
+    serde_json::to_string(&path.display().to_string()).unwrap()
+}
+
+/// The exact bytes of `skills install|update` output: the key order of the
+/// JSON is part of the contract with the official CLI.
+#[tokio::test]
+async fn install_output_bytes() {
+    let project = Project::new().await;
+    project.fake.add(
+        "example",
+        1,
+        &["production"],
+        &[("SKILL.md", SKILL), ("docs/guide.md", "guide")],
+    );
+    let path = project.root.join(".agents/skills/example");
+    let dir = quoted(&path);
+
+    let output = project.skills(&["install", "example"]).await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"name\":\"example\",\"version\":1,\"labels\":[\"production\"],\"directory\":{dir},\"files\":2,\"status\":\"installed\"}}\n"
+        )
+    );
+    let output = project.skills(&["install", "example"]).await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"name\":\"example\",\"version\":1,\"labels\":[\"production\"],\"directory\":{dir},\"files\":2,\"status\":\"unchanged\"}}\n"
+        )
+    );
+    let output = project.skills(&["update"]).await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "[{{\"name\":\"example\",\"version\":1,\"labels\":[\"production\"],\"directory\":{dir},\"files\":2,\"status\":\"unchanged\"}}]\n"
+        )
+    );
+
+    let output = project.run(&["skills", "install", "example"]).await;
+    assert_eq!(
+        output.stdout,
+        format!("Already up to date: example@1 at {}\n", path.display())
+    );
+    std::fs::remove_dir_all(&path).unwrap();
+    let output = project.run(&["skills", "install"]).await;
+    assert_eq!(
+        output.stdout,
+        format!("Installed example@1 to {} (2 files)\n", path.display())
+    );
+
+    // Skipped skills come first in the array.
+    let project = Project::new().await;
+    project
+        .fake
+        .add("alpha", 1, &["production"], &[("SKILL.md", "a")]);
+    project
+        .fake
+        .add("beta", 1, &["staging"], &[("SKILL.md", "b")]);
+    let alpha = quoted(&project.root.join(".agents/skills/alpha"));
+    let output = project.skills(&["install", "--all"]).await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "[{{\"name\":\"beta\",\"status\":\"skipped\",\"reason\":\"no-production-version\"}},{{\"name\":\"alpha\",\"version\":1,\"labels\":[\"production\"],\"directory\":{alpha},\"files\":1,\"status\":\"installed\"}}]\n"
+        )
+    );
+    let output = project.run(&["skills", "install", "--tag", "none"]).await;
+    assert_eq!(output.stdout, "No skills found with tag \"none\"\n");
+    let empty = Project::new().await;
+    let output = empty
+        .run(&["skills", "install", "--all", "--no-lockfile"])
+        .await;
+    assert_eq!(output.stdout, "No skills found in this Langfuse project\n");
+}
+
+/// The exact bytes of `skills push` output, for every kind of result.
+#[tokio::test]
+async fn push_output_bytes() {
+    let project = Project::new().await;
+    project.write("skills/example/SKILL.md", SKILL);
+    project.write("skills/example/docs/a.md", "a");
+    let path = project.root.join("skills/example");
+    let dir = quoted(&path);
+
+    let output = project
+        .skills(&["push", "skills/example", "--dry-run", "--label", "staging"])
+        .await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"name\":\"example\",\"version\":null,\"directory\":{dir},\"files\":2,\"included\":[\"SKILL.md\",\"docs/a.md\"],\"excluded\":[],\"status\":\"would-create\",\"changes\":{{\"added\":[\"SKILL.md\",\"docs/a.md\"],\"changed\":[],\"removed\":[]}},\"dryRun\":true,\"expectedVersion\":1,\"label\":\"staging\"}}\n"
+        )
+    );
+    let output = project
+        .skills(&["push", "skills/example", "--update-only"])
+        .await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"name\":\"example\",\"version\":null,\"directory\":{dir},\"files\":2,\"status\":\"skipped\",\"reason\":\"not-found\"}}\n"
+        )
+    );
+    let output = project
+        .run(&["skills", "push", "skills/example", "--update-only"])
+        .await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "Skipped example: skill does not exist in Langfuse ({})\n",
+            path.display()
+        )
+    );
+
+    let output = project
+        .skills(&["push", "skills/example", "--label", "production"])
+        .await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"name\":\"example\",\"version\":1,\"directory\":{dir},\"files\":2,\"labels\":[\"latest\",\"production\"],\"status\":\"created\"}}\n"
+        )
+    );
+    let output = project.skills(&["push", "skills/example"]).await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"name\":\"example\",\"version\":1,\"directory\":{dir},\"files\":2,\"labels\":[\"latest\",\"production\"],\"status\":\"unchanged\"}}\n"
+        )
+    );
+    let output = project.run(&["skills", "push", "skills/example"]).await;
+    assert_eq!(
+        output.stdout,
+        "Already up to date: example@1 (2 files; labels: latest, production)\n"
+    );
+    let output = project
+        .skills(&["push", "skills/example", "--dry-run", "--label", "staging"])
+        .await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"name\":\"example\",\"version\":1,\"directory\":{dir},\"files\":2,\"included\":[\"SKILL.md\",\"docs/a.md\"],\"excluded\":[],\"status\":\"would-label\",\"changes\":{{\"added\":[],\"changed\":[],\"removed\":[]}},\"dryRun\":true,\"expectedVersion\":1,\"label\":\"staging\"}}\n"
+        )
+    );
+    let output = project
+        .skills(&["push", "skills/example", "--label", "staging"])
+        .await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"name\":\"example\",\"version\":1,\"directory\":{dir},\"files\":2,\"labels\":[\"latest\",\"production\",\"staging\"],\"status\":\"labeled\"}}\n"
+        )
+    );
+
+    project.write("skills/example/docs/a.md", "changed");
+    project.write("skills/example/new.md", "new");
+    project.write("skills/example/private/key.md", "k");
+    std::fs::remove_file(path.join("docs/a.md")).unwrap();
+    let output = project
+        .run(&[
+            "skills",
+            "push",
+            "skills/example",
+            "--dry-run",
+            "--exclude",
+            "private",
+        ])
+        .await;
+    assert_eq!(
+        output.stdout,
+        "Dry run: example v1->v2 (1 added, 0 changed, 1 removed)\n  Include \"SKILL.md\"\n  \
+         Include \"new.md\"\n  Exclude \"private/\" (exclude)\n"
+    );
+    let output = project.run(&["skills", "push", "skills/example"]).await;
+    assert_eq!(
+        output.stdout,
+        "Published: example@2 (3 files; labels: latest)\n"
+    );
+}
+
+/// The exact bytes of a recursive push: invalid skills first, then one
+/// result per skill.
+#[tokio::test]
+async fn recursive_push_output_bytes() {
+    let project = Project::new().await;
+    project.write("skills/a/SKILL.md", "---\nname: a\ndescription: A\n---\n");
+    project.write("skills/broken/SKILL.md", "no frontmatter");
+    project.write(
+        "skills/nested/b/SKILL.md",
+        "---\nname: b\ndescription: B\n---\n",
+    );
+    project
+        .fake
+        .add("b", 1, &["production", "latest"], &[("SKILL.md", "old")]);
+    let a = project.root.join("skills/a");
+    let b = project.root.join("skills/nested/b");
+    let broken = project.root.join("skills/broken");
+    let message = format!(
+        "Cannot read skill at {}: SKILL.md must start with YAML frontmatter delimited by ---",
+        broken.display()
+    );
+    let args = [
+        "push",
+        "skills",
+        "--recursive",
+        "--update-only",
+        "--dry-run",
+    ];
+
+    let output = project.skills(&args).await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "[{{\"directory\":{broken},\"status\":\"skipped\",\"reason\":\"invalid-skill\",\"message\":{message},\"dryRun\":true}},\
+             {{\"name\":\"a\",\"version\":null,\"directory\":{a},\"files\":1,\"included\":[\"SKILL.md\"],\"excluded\":[],\"status\":\"skipped\",\"reason\":\"not-found\",\"dryRun\":true}},\
+             {{\"name\":\"b\",\"version\":1,\"directory\":{b},\"files\":1,\"included\":[\"SKILL.md\"],\"excluded\":[],\"status\":\"would-create\",\"changes\":{{\"added\":[],\"changed\":[\"SKILL.md\"],\"removed\":[]}},\"dryRun\":true,\"expectedVersion\":2}}]\n",
+            broken = quoted(&broken),
+            message = serde_json::to_string(&message).unwrap(),
+            a = quoted(&a),
+            b = quoted(&b),
+        )
+    );
+
+    let output = project.run(&[&["skills"], args.as_slice()].concat()).await;
+    assert_eq!(
+        output.stdout,
+        format!(
+            "Skipped invalid skill: {message}\n\
+             Skipped a: skill does not exist in Langfuse ({})\n  Include \"SKILL.md\"\n\
+             Dry run: b v1->v2 (0 added, 1 changed, 0 removed)\n  Include \"SKILL.md\"\n",
+            a.display()
+        )
+    );
+
+    let output = project.skills(&["push", "skills", "--recursive"]).await;
+    assert_eq!(output.exit, Exit::Success, "{output:?}");
+    assert_eq!(
+        output.stdout,
+        format!(
+            "[{{\"directory\":{broken},\"status\":\"skipped\",\"reason\":\"invalid-skill\",\"message\":{message}}},\
+             {{\"name\":\"a\",\"version\":1,\"directory\":{a},\"files\":1,\"labels\":[\"latest\"],\"status\":\"created\"}},\
+             {{\"name\":\"b\",\"version\":2,\"directory\":{b},\"files\":1,\"labels\":[\"latest\"],\"status\":\"created\"}}]\n",
+            broken = quoted(&broken),
+            message = serde_json::to_string(&message).unwrap(),
+            a = quoted(&a),
+            b = quoted(&b),
+        )
+    );
+    assert_eq!(
+        project.read("skills/langfuse-skills.lock"),
+        "{\n  \"lockVersion\": 1,\n  \"skills\": [\n    {\n      \"path\": \"a\",\n      \"name\": \"a\",\n      \
+         \"selector\": {\n        \"version\": 1\n      },\n      \"version\": 1\n    },\n    {\n      \
+         \"path\": \"nested/b\",\n      \"name\": \"b\",\n      \"selector\": {\n        \"version\": 2\n      },\n      \
+         \"version\": 2\n    }\n  ]\n}\n"
+    );
+    let output = project.run(&["skills", "push", "skills/empty"]).await;
+    assert_eq!(output.exit, Exit::Local, "{output:?}");
+}
+
+/// `skills` commands exist for their side effects: they finish the work when
+/// nobody reads stdout, and report any other write failure.
+#[tokio::test]
+async fn stdout_failures_do_not_lose_work() {
+    let project = Project::new().await;
+    project
+        .fake
+        .add("alpha", 1, &["production"], &[("SKILL.md", "a")]);
+    project
+        .fake
+        .add("beta", 1, &["production"], &[("SKILL.md", "b")]);
+    let connection = common::connection(&project.server);
+    let mut args: Vec<&str> = connection.iter().map(String::as_str).collect();
+    args.extend(["skills", "install", "--all"]);
+
+    let mut stdout = common::FailingStdout(std::io::ErrorKind::BrokenPipe);
+    let (exit, stderr) = common::run_on(&project.root, &mut stdout, &args).await;
+    assert_eq!(exit, Exit::Success, "{stderr}");
+    assert_eq!(stderr, "");
+    assert_eq!(project.read(".agents/skills/alpha/SKILL.md"), "a");
+    assert_eq!(project.read(".agents/skills/beta/SKILL.md"), "b");
+    assert_eq!(project.lock()["skills"].as_array().unwrap().len(), 2);
+
+    let mut stdout = common::FailingStdout(std::io::ErrorKind::Other);
+    let (exit, stderr) = common::run_on(&project.root, &mut stdout, &args).await;
+    assert_eq!(exit, Exit::Internal);
+    assert_eq!(stderr, "Cannot write to stdout: stdout failed\n");
+}
+
+#[tokio::test]
+async fn empty_path_arguments_keep_the_official_messages() {
+    let project = Project::new().await;
+    for (args, message) in [
+        (
+            vec!["install", "example", "--directory", ""],
+            "--directory requires a value\n",
+        ),
+        (
+            vec!["install", "example", "--lockfile", ""],
+            "--lockfile requires a value\n",
+        ),
+        (
+            vec!["update", "--lockfile", ""],
+            "--lockfile requires a value\n",
+        ),
+        (vec!["push", ""], "skills push requires one directory\n"),
+    ] {
+        let output = project.skills(&args).await;
+        assert_eq!(output.exit, Exit::Usage, "{args:?}");
+        assert_eq!(output.stderr, message, "{args:?}");
+    }
+    assert_eq!(project.requests().await, 0);
+}
+
+/// Manifests overlap on the wire; the results and the lockfile keep the
+/// order of the skills.
+#[tokio::test]
+async fn many_skills_keep_their_order() {
+    let project = Project::new().await;
+    let names = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+    for name in names {
+        project
+            .fake
+            .add(name, 1, &["production"], &[("SKILL.md", name)]);
+    }
+    let output = project.skills(&["install", "--all"]).await;
+    assert_eq!(output.exit, Exit::Success, "{output:?}");
+    let results = output.json();
+    let installed: Vec<&str> = results
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| result["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(installed, names);
+    let lock = project.lock();
+    let locked: Vec<&str> = lock["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|skill| skill["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(locked, names);
+    for name in names {
+        assert_eq!(
+            project.read(&format!(".agents/skills/{name}/SKILL.md")),
+            name
+        );
+    }
+
+    // The first failure, in the skills' order, is the one reported.
+    project
+        .fake
+        .add("zeta", 1, &["staging"], &[("SKILL.md", "z")]);
+    let output = project
+        .skills(&["install", "--all", "--label", "staging", "--no-lockfile"])
+        .await;
+    assert_eq!(output.exit, Exit::Http, "{output:?}");
+    assert!(
+        output.stderr.contains("/api/public/skills/a?label=staging"),
+        "{}",
+        output.stderr
+    );
+}
+
+/// File names that are not UTF-8 have no path to publish or to compare.
+#[cfg(unix)]
+#[tokio::test]
+async fn file_names_that_are_not_utf8() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.md");
+
+    let project = Project::new().await;
+    project.write("skills/example/SKILL.md", SKILL);
+    std::fs::write(project.root.join("skills/example").join(name), "x").unwrap();
+    let output = project
+        .skills(&["push", "skills/example", "--dry-run"])
+        .await;
+    assert_eq!(output.exit, Exit::Local, "{output:?}");
+    assert!(
+        output.stderr.contains("Invalid skill file path:")
+            && output.stderr.contains("is not valid UTF-8"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(project.requests().await, 0);
+
+    // An installed copy with such a file differs from every manifest.
+    project
+        .fake
+        .add("example", 1, &["production"], &[("SKILL.md", SKILL)]);
+    project.skills(&["install", "example"]).await;
+    std::fs::write(project.root.join(".agents/skills/example").join(name), "x").unwrap();
+    let output = project.skills(&["install", "example"]).await;
+    assert_eq!(output.exit, Exit::Local, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .ends_with("contains different files; pass --force to replace it\n"),
+        "{}",
+        output.stderr
     );
 }

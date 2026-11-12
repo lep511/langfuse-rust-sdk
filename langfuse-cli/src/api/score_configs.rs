@@ -7,7 +7,7 @@ use langfuse_rust_sdk::models::score_configs::{
 };
 use serde_json::Value;
 
-use crate::args::{BodyChannel, bool_value, expand_objects, json_value, tri_state, wire_enum};
+use crate::args::{BodyChannel, bool_value, expand_objects, json_value, required, tri_state, wire};
 use crate::error::{CliError, Result};
 use crate::operation::{Context, HttpMethod, Operation, OperationMeta, PreparedRequest};
 
@@ -54,10 +54,10 @@ struct CreateFields {
     /// Data type of the scores
     #[arg(
         long,
-        value_parser = ["NUMERIC", "BOOLEAN", "CATEGORICAL", "TEXT"],
+        value_parser = wire::<ScoreConfigDataType>(&["NUMERIC", "BOOLEAN", "CATEGORICAL", "TEXT"]),
         required_unless_present_any = ["body_json", "body_file"]
     )]
-    data_type: Option<String>,
+    data_type: Option<ScoreConfigDataType>,
     /// Category {"label": …, "value": …} of categorical scores (repeatable, or one JSON array)
     #[arg(long, value_parser = json_value, value_name = "JSON")]
     categories: Vec<Value>,
@@ -90,10 +90,7 @@ impl Operation for Create {
         let f = &self.fields;
         request.body_from(&CreateScoreConfigRequest {
             name: f.name.clone().unwrap_or_default(),
-            data_type: wire_enum::<ScoreConfigDataType>(
-                "data-type",
-                f.data_type.as_deref().unwrap_or_default(),
-            )?,
+            data_type: required("data-type", f.data_type.clone())?,
             categories: categories(&f.categories)?,
             min_value: f.min_value,
             max_value: f.max_value,

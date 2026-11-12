@@ -1,6 +1,40 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.0 (2026-11-12)
+
+The result of an audit of how the CLI uses Rust
+(`../docs/langfuse-cli-rust-audit.md`). Machine-readable output is unchanged,
+byte for byte.
+
+- **Pipes.** A reader that closes the pipe (`langfuse api … | head`) ends a
+  printing command quietly with exit 0, and `--all` stops sending requests;
+  `skills` commands finish their work. Before, `completions <shell> | head`
+  panicked (exit 101) and `api schema --json | head` failed with exit 1.
+- **Exit codes.** Only the documented ones (0–7): a panic is caught and
+  becomes exit 1, and a write to stdout that fails for any reason other than
+  a closed pipe (a full disk behind a redirection) is exit 1 with a message,
+  for `skills` commands too.
+- **Memory.** Responses are serialized straight to stdout and `--all` moves
+  each page instead of copying it: about half the peak memory with `--all`,
+  a quarter to a third less for one large response.
+- **`api schema`** (without `--json`) no longer prints colour codes when its
+  output is not a terminal; it follows `--color`.
+- **Skills.**
+  - Manifests are requested a few at a time; results keep their order.
+  - A file whose name is not valid UTF-8 is an explicit error when
+    publishing, instead of a "file not found".
+  - The details of lockfile errors are worded differently (the
+    `Cannot read <path>:` prefix and exit 6 are the same).
+- **Completions.** The zsh and fish scripts complete file names for
+  `--directory` and `--lockfile`.
+- **Library (breaking).** The crate's public API is now `run`, `command`,
+  `Io` and `Exit`; its modules are private. `Io` has a new `color_allowed`
+  field and an `Io::stdio` constructor.
+- **Checks.** A `[lints]` table (no `unsafe`, clippy lints for needless
+  clones and lossy casts) and a CI workflow
+  (`../.github/workflows/langfuse-cli.yml`).
+
+## 0.1.0 (2026-11-11)
 
 First version: a Rust port of the official Langfuse CLI (`@langfuse/cli`
 1.3.1), built on `langfuse-rust-sdk` 0.11.3 and clap 4.6.

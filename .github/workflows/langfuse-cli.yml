@@ -1,0 +1,62 @@
+# Checks of the standalone `langfuse-rust-cli` crate in `langfuse-cli/`: the
+# commands of `langfuse-cli/CLAUDE.md`, plus the documentation build and
+# `cargo audit`. The SDK workspace around it is not built here.
+name: langfuse-cli
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "langfuse-cli/**"
+      - ".github/workflows/langfuse-cli.yml"
+  pull_request:
+    paths:
+      - "langfuse-cli/**"
+      - ".github/workflows/langfuse-cli.yml"
+  schedule:
+    # Mondays: new advisories and new stable toolchains, without a push.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: langfuse-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: langfuse-cli
+
+jobs:
+  check:
+    name: fmt, clippy, tests, docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: langfuse-cli
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features -- -D warnings
+      - run: cargo test
+      - run: cargo test --no-default-features
+      - run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit

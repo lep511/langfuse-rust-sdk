@@ -61,15 +61,15 @@ impl Operation for List {
     fn prepare(&self, _ctx: &mut Context<'_>) -> Result<PreparedRequest> {
         let w = &self.window;
         let mut params = ListExperimentsParams::new(w.from_start_time.clone());
-        params.fields = self.fields.clone();
+        params.fields.clone_from(&self.fields);
         params.limit = self.cursor.limit;
         params.score_limit = w.score_limit;
-        params.cursor = self.cursor.cursor.clone();
-        params.to_start_time = w.to_start_time.clone();
-        params.id = self.id.clone();
-        params.name = self.name.clone();
-        params.dataset_id = w.dataset_id.clone();
-        params.filter = w.filter.clone();
+        params.cursor.clone_from(&self.cursor.cursor);
+        params.to_start_time.clone_from(&w.to_start_time);
+        params.id.clone_from(&self.id);
+        params.name.clone_from(&self.name);
+        params.dataset_id.clone_from(&w.dataset_id);
+        params.filter.clone_from(&w.filter);
         PreparedRequest::new(&Self::META).query(&params)
     }
 
@@ -115,16 +115,18 @@ impl Operation for ListItems {
     fn prepare(&self, _ctx: &mut Context<'_>) -> Result<PreparedRequest> {
         let w = &self.window;
         let mut params = ListExperimentItemsParams::new(w.from_start_time.clone());
-        params.fields = self.fields.clone();
+        params.fields.clone_from(&self.fields);
         params.limit = self.cursor.limit;
         params.score_limit = w.score_limit;
-        params.cursor = self.cursor.cursor.clone();
-        params.to_start_time = w.to_start_time.clone();
-        params.experiment_id = self.experiment_id.clone();
-        params.experiment_name = self.experiment_name.clone();
-        params.experiment_item_id = self.experiment_item_id.clone();
-        params.dataset_id = w.dataset_id.clone();
-        params.filter = w.filter.clone();
+        params.cursor.clone_from(&self.cursor.cursor);
+        params.to_start_time.clone_from(&w.to_start_time);
+        params.experiment_id.clone_from(&self.experiment_id);
+        params.experiment_name.clone_from(&self.experiment_name);
+        params
+            .experiment_item_id
+            .clone_from(&self.experiment_item_id);
+        params.dataset_id.clone_from(&w.dataset_id);
+        params.filter.clone_from(&w.filter);
         PreparedRequest::new(&Self::META).query(&params)
     }
 

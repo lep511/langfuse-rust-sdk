@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
 description = "Command-line client for the Langfuse API, built on langfuse-rust-sdk"
@@ -42,9 +42,24 @@ serde_norway = "0.9"
 serde_urlencoded = "0.7"
 sha2 = "0.11"
 terminal_size = "0.4"
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros", "process", "io-util", "time"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+
+# Enforced by `cargo clippy … -D warnings` (see CLAUDE.md) and by CI.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+
+# On top of clippy's defaults: the lints that catch copies and lossy casts.
+[lints.clippy]
+assigning_clones = "warn"
+redundant_clone = "warn"
+needless_collect = "warn"
+format_push_string = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
 
 [profile.release]
 lto = true

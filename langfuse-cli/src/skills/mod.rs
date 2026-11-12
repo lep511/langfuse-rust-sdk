@@ -10,7 +10,11 @@ pub mod lock;
 pub mod paths;
 pub mod publish_filter;
 pub mod push;
+pub mod types;
 
+use std::path::PathBuf;
+
+use clap::builder::{OsStringValueParser, TypedValueParser};
 use clap::{Args, Subcommand};
 
 use crate::cli::GlobalArgs;
@@ -28,6 +32,13 @@ Examples:
   langfuse skills install                           # restore the versions in the lockfile
 
 Without --label, --tag and --all skip skills that have no production version.";
+
+/// A path argument, which need not be UTF-8. Unlike clap's own `PathBuf`
+/// parser it lets the empty string through: the commands reject it with the
+/// official CLI's messages.
+fn path() -> impl TypedValueParser<Value = PathBuf> {
+    OsStringValueParser::new().map(PathBuf::from)
+}
 
 /// `langfuse skills`.
 #[derive(Debug, Args)]
@@ -73,12 +84,12 @@ pub struct InstallArgs {
     pub label: Option<String>,
 
     /// Parent of installed skills, where the lockfile is looked up [default: .agents/skills]
-    #[arg(long, value_name = "PATH")]
-    pub directory: Option<String>,
+    #[arg(long, value_name = "PATH", value_parser = path())]
+    pub directory: Option<PathBuf>,
 
     /// Read and write this lockfile instead of langfuse-skills.lock
-    #[arg(long, value_name = "PATH")]
-    pub lockfile: Option<String>,
+    #[arg(long, value_name = "PATH", value_parser = path())]
+    pub lockfile: Option<PathBuf>,
 
     /// Neither read nor write a lockfile (with a name, --tag or --all)
     #[arg(long)]
@@ -96,12 +107,12 @@ pub struct UpdateArgs {
     pub name: Option<String>,
 
     /// Where the lockfile is looked up [default: .agents/skills]
-    #[arg(long, value_name = "PATH")]
-    pub directory: Option<String>,
+    #[arg(long, value_name = "PATH", value_parser = path())]
+    pub directory: Option<PathBuf>,
 
     /// Read and write this lockfile instead of langfuse-skills.lock
-    #[arg(long, value_name = "PATH")]
-    pub lockfile: Option<String>,
+    #[arg(long, value_name = "PATH", value_parser = path())]
+    pub lockfile: Option<PathBuf>,
 
     /// Replace installations with local changes
     #[arg(long)]
@@ -112,8 +123,8 @@ pub struct UpdateArgs {
 #[derive(Debug, Clone, Default, Args)]
 pub struct PushArgs {
     /// The skill directory (or, with --recursive, a directory of skills)
-    #[arg(value_name = "DIRECTORY")]
-    pub directory: String,
+    #[arg(value_name = "DIRECTORY", value_parser = path())]
+    pub directory: PathBuf,
 
     /// Record why this version was published (at most 500 characters)
     #[arg(long, value_name = "TEXT")]
@@ -144,8 +155,8 @@ pub struct PushArgs {
     pub no_lockfile: bool,
 
     /// Read and write this lockfile instead of langfuse-skills.lock
-    #[arg(long, value_name = "PATH")]
-    pub lockfile: Option<String>,
+    #[arg(long, value_name = "PATH", value_parser = path())]
+    pub lockfile: Option<PathBuf>,
 
     /// Leave out a file or directory, relative to each skill (repeatable; literal, no globs)
     #[arg(long, value_name = "PATH")]

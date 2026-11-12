@@ -148,7 +148,14 @@ impl OperationMeta {
     }
 
     /// 204 response.
+    ///
+    /// The executor has no call for a `PUT` without a response body, so
+    /// declaring one does not compile (every `META` is a constant).
     pub const fn empty(mut self) -> Self {
+        assert!(
+            !matches!(self.method, HttpMethod::Put),
+            "a PUT operation needs a JSON response"
+        );
         self.response = ResponseKind::Empty;
         self
     }
@@ -183,6 +190,27 @@ impl OperationMeta {
         self
     }
 
+    /// Whether the path template has the parameter `{name}`. Usable in
+    /// constants: the operation macros assert it for every parameter they fill.
+    pub const fn has_path_parameter(&self, name: &str) -> bool {
+        let path = self.path.as_bytes();
+        let name = name.as_bytes();
+        let mut start = 0;
+        while start + name.len() + 2 <= path.len() {
+            if path[start] == b'{' && path[start + name.len() + 1] == b'}' {
+                let mut matched = 0;
+                while matched < name.len() && path[start + 1 + matched] == name[matched] {
+                    matched += 1;
+                }
+                if matched == name.len() {
+                    return true;
+                }
+            }
+            start += 1;
+        }
+        false
+    }
+
     /// The path parameter names, in path order.
     pub fn path_parameters(&self) -> Vec<&'static str> {
         let mut names = Vec::new();
@@ -202,6 +230,12 @@ impl OperationMeta {
 pub struct Context<'a> {
     /// Standard input, for `--body-file -`.
     pub stdin: &'a mut dyn Read,
+}
+
+impl std::fmt::Debug for Context<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Context").finish_non_exhaustive()
+    }
 }
 
 /// A typed `langfuse api` action.
@@ -297,11 +331,8 @@ impl PreparedRequest {
     pub fn query<Q: Serialize>(mut self, params: &Q) -> Result<Self> {
         let encoded = serde_urlencoded::to_string(params)
             .map_err(|error| CliError::usage(format!("Invalid query parameters: {error}")))?;
-        self.query.extend(
-            url::form_urlencoded::parse(encoded.as_bytes())
-                .into_owned()
-                .collect::<Vec<_>>(),
-        );
+        self.query
+            .extend(url::form_urlencoded::parse(encoded.as_bytes()).into_owned());
         Ok(self)
     }
 
@@ -353,6 +384,15 @@ mod tests {
         HttpMethod::Patch,
         "/api/public/skills/{skillName}/versions/{skillVersion}",
     );
+
+    // Checked when this module is compiled, like the ones in the macros.
+    const _: () = {
+        assert!(META.has_path_parameter("skillName"));
+        assert!(META.has_path_parameter("skillVersion"));
+        assert!(!META.has_path_parameter("skill"));
+        assert!(!META.has_path_parameter("skillVersions"));
+        assert!(!META.has_path_parameter(""));
+    };
 
     #[test]
     fn path_parameters_are_listed_in_order_and_encoded() {

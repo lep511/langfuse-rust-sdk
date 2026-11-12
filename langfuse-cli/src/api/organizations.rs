@@ -7,11 +7,11 @@ use langfuse_rust_sdk::models::organizations::{
 };
 
 use crate::api::llm_connections::{DeleteOrganization, ListOrganization, UpsertOrganization};
-use crate::args::{BodyChannel, wire_enum};
+use crate::args::{BodyChannel, required, wire};
 use crate::error::Result;
 use crate::operation::{Context, HttpMethod, Operation, OperationMeta, PreparedRequest};
 
-const ROLES: [&str; 4] = ["OWNER", "ADMIN", "MEMBER", "VIEWER"];
+const ROLES: &[&str] = &["OWNER", "ADMIN", "MEMBER", "VIEWER"];
 
 /// `--user-id` / `--role` of membership upserts.
 #[derive(Debug, Args)]
@@ -22,8 +22,12 @@ pub struct MembershipFields {
     #[arg(long, required_unless_present_any = ["body_json", "body_file"])]
     user_id: Option<String>,
     /// The role
-    #[arg(long, value_parser = ROLES, required_unless_present_any = ["body_json", "body_file"])]
-    role: Option<String>,
+    #[arg(
+        long,
+        value_parser = wire::<MembershipRole>(ROLES),
+        required_unless_present_any = ["body_json", "body_file"]
+    )]
+    role: Option<MembershipRole>,
 }
 
 /// A membership upsert body.
@@ -47,10 +51,7 @@ impl MembershipBody {
         }
         request.body_from(&MembershipRequest {
             user_id: self.fields.user_id.clone().unwrap_or_default(),
-            role: wire_enum::<MembershipRole>(
-                "role",
-                self.fields.role.as_deref().unwrap_or_default(),
-            )?,
+            role: required("role", self.fields.role)?,
         })
     }
 }

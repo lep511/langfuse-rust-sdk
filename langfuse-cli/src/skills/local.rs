@@ -14,7 +14,8 @@ pub fn decode_skill_content(bytes: &[u8]) -> Option<String> {
 }
 
 fn matches_file(bytes: &[u8], expected: &SkillFile) -> bool {
-    bytes.len() as u64 == expected.content_length && sha256_base64(bytes) == expected.sha256_hash
+    u64::try_from(bytes.len()).ok() == Some(expected.content_length)
+        && sha256_base64(bytes) == expected.sha256_hash
 }
 
 /// Whether `directory` is a real directory holding exactly the manifest's
@@ -44,7 +45,10 @@ fn walk(directory: &Path, files: &[SkillFile]) -> std::io::Result<bool> {
     while let Some(parent) = pending.pop() {
         for entry in std::fs::read_dir(directory.join(&parent))? {
             let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
+            // A manifest path is text: a name that is not UTF-8 is not in it.
+            let Ok(name) = entry.file_name().into_string() else {
+                return Ok(false);
+            };
             let path = if parent.is_empty() {
                 name
             } else {

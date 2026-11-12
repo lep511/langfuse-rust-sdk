@@ -4,16 +4,18 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::error::{CliError, Result};
 use crate::output::{Io, escape_terminal_text};
-use crate::skills::api::{is_skill_name, sha256_base64};
+use crate::skills::api::sha256_base64;
 use crate::skills::local::decode_skill_content;
 use crate::skills::paths::contains;
 use crate::skills::publish_filter::{
     Exclusion, GitSelection, git_excludes, publish_exclusion, read_git_selection,
 };
+use crate::skills::types::SkillName;
 
 const MAX_FILES: usize = 200;
 const MAX_BYTES: u64 = 1_000_000;
@@ -95,7 +97,7 @@ pub struct LocalSkillFile {
 }
 
 /// A path left out of the snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExcludedPath {
     /// The path (directories end with `/`).
     pub path: String,
@@ -107,7 +109,7 @@ pub struct ExcludedPath {
 #[derive(Debug, Clone)]
 pub struct LocalSkill {
     /// Name from the SKILL.md frontmatter.
-    pub name: String,
+    pub name: SkillName,
     /// Real path of the skill directory.
     pub directory: PathBuf,
     /// Files, sorted by path.
@@ -151,7 +153,7 @@ fn notice(io: &mut Io<'_>, text: &str) {
 
 /// The skill directories below `directory` (a directory with a SKILL.md is a
 /// skill and is not descended into), sorted.
-pub fn discover_skill_directories(
+pub async fn discover_skill_directories(
     directory: &Path,
     follow_symlinks: bool,
     io: &mut Io<'_>,
@@ -162,7 +164,6 @@ pub fn discover_skill_directories(
             directory.display()
         ))
     };
-    let git = |error: CliError| error;
     let source = if follow_symlinks {
         canonical(directory).map_err(fail)?
     } else {
@@ -195,7 +196,7 @@ pub fn discover_skill_directories(
             .and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>())
             .map_err(|error| fail(error.to_string()))?;
         entries.sort_by_key(std::fs::DirEntry::file_name);
-        let selection = read_git_selection(&real, parent_selection.as_ref()).map_err(git)?;
+        let selection = read_git_selection(&real, parent_selection.as_ref()).await?;
 
         if entries.iter().any(|entry| entry.file_name() == "SKILL.md") {
             if git_excludes(&selection, &real.join("SKILL.md")) {
@@ -214,12 +215,16 @@ pub fn discover_skill_directories(
             continue;
         }
         for entry in entries {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let name = entry.file_name();
             let path = current.join(&name);
             let kind = entry.file_type().map_err(|error| fail(error.to_string()))?;
-            let reason = publish_exclusion(&name, &[]).or_else(|| {
-                git_excludes(&selection, &real.join(&name)).then_some(Exclusion::GitIgnore)
-            });
+            // Git metadata has a UTF-8 name; any other name is Git's to judge.
+            let reason = name
+                .to_str()
+                .and_then(|name| publish_exclusion(name, &[]))
+                .or_else(|| {
+                    git_excludes(&selection, &real.join(&name)).then_some(Exclusion::GitIgnore)
+                });
             if let Some(reason) = reason {
                 if reason == Exclusion::GitIgnore && (kind.is_dir() || kind.is_symlink()) {
                     notice(
@@ -317,7 +322,7 @@ fn read_skill_file(directory: &Path, path: &str) -> std::result::Result<LocalSki
             "Skill file exceeds {MAX_BYTES} UTF-8 bytes: {path}"
         ));
     }
-    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    let mut bytes = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or_default());
     file.take(MAX_BYTES + 4)
         .read_to_end(&mut bytes)
         .map_err(|error| format!("{path}: {error}"))?;
@@ -326,15 +331,17 @@ fn read_skill_file(directory: &Path, path: &str) -> std::result::Result<LocalSki
     if content.contains('\0') {
         return Err(format!("Skill file contains NUL characters: {path}"));
     }
+    let content_length = u64::try_from(content.len())
+        .map_err(|_| format!("Skill file exceeds {MAX_BYTES} UTF-8 bytes: {path}"))?;
     Ok(LocalSkillFile {
         path: path.to_owned(),
         sha256_hash: sha256_base64(content.as_bytes()),
-        content_length: content.len() as u64,
+        content_length,
         content,
     })
 }
 
-fn read_skill_files(
+async fn read_skill_files(
     directory: &Path,
     exclusions: &[String],
 ) -> std::result::Result<(Vec<LocalSkillFile>, Vec<ExcludedPath>), ReadError> {
@@ -364,13 +371,20 @@ fn read_skill_files(
             )));
         }
         let real = canonical(&disk).map_err(invalid)?;
-        let selection =
-            read_git_selection(&real, parent_selection.as_ref()).map_err(ReadError::Git)?;
+        let selection = read_git_selection(&real, parent_selection.as_ref())
+            .await
+            .map_err(ReadError::Git)?;
         let entries = std::fs::read_dir(&disk)
             .and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>())
             .map_err(|error| invalid(error.to_string()))?;
         for entry in entries {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            // A published path is text: a name that is not UTF-8 has none.
+            let name = entry.file_name().into_string().map_err(|name| {
+                invalid(format!(
+                    "Invalid skill file path: {} is not valid UTF-8",
+                    Path::new(&parent).join(name).display()
+                ))
+            })?;
             let path = if parent.is_empty() {
                 name
             } else {
@@ -449,7 +463,7 @@ pub fn frontmatter(content: &str) -> Option<&str> {
     None
 }
 
-fn read_skill_name(files: &[LocalSkillFile]) -> std::result::Result<String, String> {
+fn read_skill_name(files: &[LocalSkillFile]) -> std::result::Result<SkillName, String> {
     let skill = files
         .iter()
         .find(|file| file.path == "SKILL.md")
@@ -464,9 +478,9 @@ fn read_skill_name(files: &[LocalSkillFile]) -> std::result::Result<String, Stri
     let name = mapping
         .get("name")
         .and_then(serde_norway::Value::as_str)
-        .map(str::trim);
-    let name = name
-        .filter(|name| name.chars().count() <= 64 && is_skill_name(name))
+        .map(str::trim)
+        .filter(|name| name.chars().count() <= 64)
+        .and_then(SkillName::new)
         .ok_or("SKILL.md requires a lowercase skill name of at most 64 characters")?;
     let description = mapping
         .get("description")
@@ -477,11 +491,11 @@ fn read_skill_name(files: &[LocalSkillFile]) -> std::result::Result<String, Stri
     {
         return Err("SKILL.md requires a description of 1 to 1024 characters".to_owned());
     }
-    Ok(name.to_owned())
+    Ok(name)
 }
 
 /// Read the skill at `directory`.
-pub fn read_local_skill(
+pub async fn read_local_skill(
     directory: &Path,
     follow_symlinks: bool,
     exclusions: &[String],
@@ -497,7 +511,7 @@ pub fn read_local_skill(
     } else {
         directory.to_path_buf()
     };
-    let (files, excluded) = match read_skill_files(&source, exclusions) {
+    let (files, excluded) = match read_skill_files(&source, exclusions).await {
         Ok(read) => read,
         Err(ReadError::Git(error)) => return Err(ReadError::Git(error)),
         Err(ReadError::Invalid(error)) => return Err(wrap(error.message)),
@@ -536,6 +550,7 @@ mod tests {
             sha256_hash: String::new(),
             content_length: 0,
         }])
+        .map(|name| name.to_string())
     }
 
     #[test]

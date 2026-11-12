@@ -1,6 +1,6 @@
-#![cfg(feature = "unstable")]
 //! The `resource action` names of every operation match the official CLI's
 //! (its 4.71.0 golden, plus the 4 Topics operations of the newer spec).
+#![cfg(feature = "unstable")]
 
 mod common;
 

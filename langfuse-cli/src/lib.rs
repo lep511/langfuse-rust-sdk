@@ -2,30 +2,35 @@
 //! [`langfuse_rust_sdk`].
 //!
 //! The binary is a thin wrapper around [`run`], which takes the arguments and
-//! the standard streams so the whole CLI is testable in-process.
+//! the standard streams ([`Io`]) and returns the exit code ([`Exit`]), so the
+//! whole CLI is testable in-process. That, and the clap tree ([`command`]),
+//! is the public API of this crate: the modules are private.
 
-pub mod api;
-pub mod args;
-pub mod cli;
-pub mod config;
-pub mod error;
-pub mod execute;
-pub mod get_skill;
-pub mod operation;
-pub mod output;
-pub mod paginate;
-pub mod schema;
-pub mod skills;
-pub mod table;
+mod api;
+mod args;
+mod cli;
+mod config;
+mod error;
+mod execute;
+mod get_skill;
+mod operation;
+mod output;
+mod paginate;
+mod schema;
+mod skills;
+mod table;
 
 use std::ffi::OsString;
-use std::io::IsTerminal;
 
 use clap::{ColorChoice, CommandFactory, FromArgMatches};
+use futures_util::FutureExt as _;
 
 use crate::cli::{Cli, Command};
-use crate::error::{CliError, Exit};
-use crate::output::{Io, escape_terminal_text};
+use crate::error::{CliError, Result};
+use crate::output::escape_terminal_text;
+
+pub use crate::error::Exit;
+pub use crate::output::Io;
 
 /// The clap command tree, with each API action's help naming its HTTP call.
 pub fn command() -> clap::Command {
@@ -69,20 +74,6 @@ pub fn command() -> clap::Command {
     command
 }
 
-/// Whether to colour a stream: `--color always|never`, else a terminal
-/// without `NO_COLOR` and with a `TERM` other than `dumb`.
-pub fn use_color(choice: ColorChoice, terminal: bool) -> bool {
-    match choice {
-        ColorChoice::Always => true,
-        ColorChoice::Never => false,
-        ColorChoice::Auto => {
-            terminal
-                && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
-                && std::env::var_os("TERM").is_none_or(|term| term != "dumb")
-        }
-    }
-}
-
 /// `--color` as given on the command line, before parsing (it decides how
 /// clap renders its own errors and help).
 fn color_choice(args: &[OsString]) -> ColorChoice {
@@ -107,10 +98,8 @@ fn color_choice(args: &[OsString]) -> ColorChoice {
 
 /// `api <resource> <action> help` means `--help`, as in the official CLI.
 fn normalize(mut args: Vec<OsString>) -> Vec<OsString> {
-    let word = |arg: Option<&OsString>| {
-        arg.filter(|arg| !arg.to_string_lossy().starts_with('-'))
-            .is_some()
-    };
+    let word =
+        |arg: Option<&OsString>| arg.is_some_and(|arg| !arg.as_encoded_bytes().starts_with(b"-"));
     if let Some(api) = args
         .iter()
         .skip(1)
@@ -127,53 +116,78 @@ fn normalize(mut args: Vec<OsString>) -> Vec<OsString> {
 }
 
 /// Run the CLI with `args` (the program name first) on `io`.
+///
+/// The exit code is always one of [`Exit`]: a panic, which is a bug, is
+/// caught and becomes [`Exit::Internal`] after Rust's own panic message.
 pub async fn run(args: impl IntoIterator<Item = impl Into<OsString>>, io: &mut Io<'_>) -> Exit {
     let args = normalize(args.into_iter().map(Into::into).collect());
-    let choice = color_choice(&args);
+    let outcome = std::panic::AssertUnwindSafe(dispatch(&args, io))
+        .catch_unwind()
+        .await;
+    let exit = match outcome {
+        Ok(Ok(exit)) => exit,
+        Ok(Err(error)) => report(&error, io),
+        Err(_panic) => Exit::Internal,
+    };
+    // Output may still sit in the stream's buffer; flushing it is part of
+    // writing it, so a failure here is a failed write like any other.
+    match io.stdout.flush() {
+        Err(error) if exit == Exit::Success => report(&CliError::stdout(error), io),
+        _ => exit,
+    }
+}
+
+/// Parse `args` and run the selected command.
+async fn dispatch(args: &[OsString], io: &mut Io<'_>) -> Result<Exit> {
+    let choice = color_choice(args);
     let command = command().color(choice);
 
-    let matches = match command.try_get_matches_from(&args) {
+    let matches = match command.try_get_matches_from(args) {
         Ok(matches) => matches,
-        Err(error) => return clap_error(error, choice, io),
+        Err(error) => return clap_error(&error, choice, io),
     };
     let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
-        Err(error) => return clap_error(error, choice, io),
+        Err(error) => return clap_error(&error, choice, io),
     };
 
-    let result = match &cli.command {
+    match &cli.command {
         Command::Api(api) => api::run(api, &cli.global, io).await,
         Command::Skills(skills) => skills::run(skills, &cli.global, io).await,
         Command::GetSkill => get_skill::run(io).await,
         Command::Completions { shell } => {
-            let mut command = command_for_completions();
-            clap_complete::generate(*shell, &mut command, "langfuse", io.stdout);
+            // `clap_complete` panics when its writer fails, so the script is
+            // generated in memory and written like any other output.
+            let mut script = Vec::new();
+            clap_complete::generate(*shell, &mut Cli::command(), "langfuse", &mut script);
+            io.out(&script)?;
             Ok(Exit::Success)
         }
-    };
-    match result {
+    }
+}
+
+/// `langfuse get-skill` reading the skill from `url` instead of GitHub, for
+/// tests of this crate.
+#[doc(hidden)]
+pub async fn get_skill_from(url: &str, io: &mut Io<'_>) -> Exit {
+    match get_skill::run_from(url, io).await {
         Ok(exit) => exit,
         Err(error) => report(&error, io),
     }
 }
 
-fn command_for_completions() -> clap::Command {
-    Cli::command()
-}
-
-/// Print a CLI error to stderr and return its exit code.
-pub fn report(error: &CliError, io: &mut Io<'_>) -> Exit {
-    let _ = writeln!(
-        io.stderr,
-        "{}{}",
-        escape_terminal_text(&error.message),
-        error.hint
-    );
+/// Print a CLI error to stderr and return its exit code. The reader closing
+/// stdout is not an error: nothing is printed and the exit code is 0.
+fn report(error: &CliError, io: &mut Io<'_>) -> Exit {
+    if error.is_closed_stdout() {
+        return Exit::Success;
+    }
+    let _ = writeln!(io.stderr, "{}", escape_terminal_text(&error.message));
     error.exit
 }
 
 /// Help and version go to stdout with exit 0; usage errors to stderr with 2.
-fn clap_error(error: clap::Error, choice: ColorChoice, io: &mut Io<'_>) -> Exit {
+fn clap_error(error: &clap::Error, choice: ColorChoice, io: &mut Io<'_>) -> Result<Exit> {
     use clap::error::ErrorKind;
     let styled = error.render();
     let to_stdout = matches!(
@@ -183,30 +197,22 @@ fn clap_error(error: clap::Error, choice: ColorChoice, io: &mut Io<'_>) -> Exit 
             | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
     );
     if to_stdout {
-        let text = if use_color(choice, io.stdout_tty) {
+        let text = if io.color_stdout(choice) {
             styled.ansi().to_string()
         } else {
             styled.to_string()
         };
-        let _ = write!(io.stdout, "{text}");
-        Exit::Success
+        io.out(text.as_bytes())?;
+        Ok(Exit::Success)
     } else {
-        let text = if use_color(choice, io.stderr_tty) {
+        let text = if io.color_stderr(choice) {
             styled.ansi().to_string()
         } else {
             styled.to_string()
         };
         let _ = write!(io.stderr, "{text}");
-        Exit::Usage
+        Ok(Exit::Usage)
     }
-}
-
-/// Real standard streams.
-pub fn stdio_terminal() -> (bool, bool, Option<u16>) {
-    let stdout_tty = std::io::stdout().is_terminal();
-    let stderr_tty = std::io::stderr().is_terminal();
-    let width = terminal_size::terminal_size().map(|(width, _)| width.0);
-    (stdout_tty, stderr_tty, width)
 }
 
 #[cfg(test)]
