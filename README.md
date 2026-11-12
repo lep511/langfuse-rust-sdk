@@ -61,11 +61,13 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 
 Organization-level endpoints (`organizations`, `scim`, `blob_storage_integrations`, project API keys, organization LLM connections) need an organization-scoped API key.
 
+The clients follow `api/openapi.yml`, a copy of the spec served by Langfuse Cloud. [`API-UPDATE-CHECK.md`](API-UPDATE-CHECK.md) explains how to check whether it is out of date (`python3 scripts/update_openapi.py --dry-run`) and how to implement what changed.
+
 The unstable APIs may change without notice upstream. Enable them with:
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.10", features = ["unstable"] }
+langfuse-rust-sdk = { version = "x.xx", features = ["unstable"] }
 ```
 
 ### Cargo features
@@ -310,7 +312,7 @@ are inserted as compact JSON.
 
 ```toml
 [dependencies]
-langfuse-rust-sdk = { version = "0.10", features = ["otel"] }
+langfuse-rust-sdk = { version = "x.xx", features = ["otel"] }
 ```
 
 A `LangfuseTracer` creates observations as OpenTelemetry spans and exports them in the

@@ -21,3 +21,11 @@ Changed (6)
   ~ unstableDashboardWidgetFilter: description changed
 
 Operations: 120 (21 unstable), schemas: 331
+
+==============================================================================
+2026-11-12 10:57:08 +0000
+Source: https://cloud.langfuse.com/generated/api/openapi.yml
+Target: api/openapi.yml
+==============================================================================
+
+No differences: api/openapi.yml is already up to date.
