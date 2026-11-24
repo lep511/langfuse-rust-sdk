@@ -307,6 +307,8 @@ use crate::api::scores::ScoresClient;
 use crate::api::skills::SkillsClient;
 use crate::api::traces::TracesClient;
 #[cfg(feature = "unstable")]
+use crate::api::unstable_billable_units::UnstableBillableUnitsClient;
+#[cfg(feature = "unstable")]
 use crate::api::unstable_dashboard_widgets::UnstableDashboardWidgetsClient;
 #[cfg(feature = "unstable")]
 use crate::api::unstable_dashboards::UnstableDashboardsClient;
@@ -373,6 +375,9 @@ pub struct LangfuseClient {
     pub organizations: OrganizationsClient,
     /// SCIM 2.0 user provisioning.
     pub scim: ScimClient,
+    /// *(unstable)* Organization billable units.
+    #[cfg(feature = "unstable")]
+    pub unstable_billable_units: UnstableBillableUnitsClient,
     /// *(unstable)* Dashboard widget queries.
     #[cfg(feature = "unstable")]
     pub unstable_dashboard_widgets: UnstableDashboardWidgetsClient,
@@ -537,6 +542,10 @@ impl LangfuseClient {
                 http: Arc::clone(&http),
             },
             scim: ScimClient {
+                http: Arc::clone(&http),
+            },
+            #[cfg(feature = "unstable")]
+            unstable_billable_units: UnstableBillableUnitsClient {
                 http: Arc::clone(&http),
             },
             #[cfg(feature = "unstable")]

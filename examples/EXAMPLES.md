@@ -1,10 +1,12 @@
 # Examples
 
-31 runnable programs that show the SDK against a real Langfuse project. Each
-one is a single file in the
+35 runnable programs that show the SDK against a real Langfuse project. Most
+are single files in the
 [`examples/`](https://github.com/lep511/langfuse-rust-sdk/tree/main/examples)
-directory of the repository, with a doc comment that says what it does, what
-it needs and what data it leaves behind.
+directory; the four unstable-API examples live in
+[`examples/unstable/`](https://github.com/lep511/langfuse-rust-sdk/tree/main/examples/unstable).
+Each has a doc comment that says what it does, what it needs and what data it
+leaves behind.
 
 Two more examples, `rig_tracing` and `bedrock_tracing`, live in
 [`integration-tests/examples/`](https://github.com/lep511/langfuse-rust-sdk/tree/main/integration-tests/examples)
@@ -24,6 +26,7 @@ because they need rig or the AWS SDK; run them with
 - [Project configuration](#project-configuration): [`manage_models`](#manage_models), [`llm_connections`](#llm_connections), [`dashboards`](#dashboards)
 - [Organization administration](#organization-administration): [`organization_admin`](#organization_admin), [`scim_users`](#scim_users)
 - [AI Gateway](#ai-gateway): [`gateway`](#gateway), [`gateway_openai`](#gateway_openai)
+- [Unstable API](#unstable-api): [`unstable_billable_units`](#unstable_billable_units), [`unstable_dashboard_widgets`](#unstable_dashboard_widgets), [`unstable_dashboards`](#unstable_dashboards), [`unstable_topics`](#unstable_topics)
 - [Verification](#verification)
 
 ## Setup
@@ -108,6 +111,10 @@ each section includes the `--features` flag. `cargo build --examples
 | [`scim_users`](#scim_users) | – | no | – | < 1 s |
 | [`gateway`](#gateway) | `otel` | yes | 1 trace, 2 gateway generations | ~5 s |
 | [`gateway_openai`](#gateway_openai) | `openai` | yes | 1 trace, 1 gateway generation | ~2 s |
+| [`unstable_billable_units`](#unstable_billable_units) | `unstable` | no | – | < 1 s |
+| [`unstable_dashboard_widgets`](#unstable_dashboard_widgets) | `unstable` | yes | nothing (widget deleted) | < 1 s |
+| [`unstable_dashboards`](#unstable_dashboards) | `unstable` | yes | nothing (dashboard and widget deleted) | < 1 s |
+| [`unstable_topics`](#unstable_topics) | `unstable` | no | – | < 1 s |
 
 ## Rate limits to keep in mind
 
@@ -1214,19 +1221,197 @@ SDK trace: https://us.cloud.langfuse.com/project/<project id>/traces/<trace id>
 
 ---
 
+## Unstable API
+
+The four examples in
+[`examples/unstable/`](https://github.com/lep511/langfuse-rust-sdk/tree/main/examples/unstable)
+exercise the endpoints under `/api/public/unstable`, which may change while
+Langfuse finalizes their contract. They all need the `unstable` feature.
+
+### `unstable_billable_units`
+
+Queries an organization's billable units per UTC time bucket and project, the
+numbers behind the Usage settings tab. Tries all four granularities (hour,
+day, week, month) and the server default.
+
+```sh
+cargo run --example unstable_billable_units --features unstable
+```
+
+- **Source:** [`examples/unstable/billable_units.rs`](https://github.com/lep511/langfuse-rust-sdk/blob/main/examples/unstable/billable_units.rs)
+- **Data:** read-only.
+- **Needs:** the `unstable` feature and an **organization-scoped** API key with
+  `organizationUsage:read`. Project-scoped keys get 403 (handled gracefully).
+- **Calls:** `unstable_billable_units.get` →
+  `GET /api/public/unstable/organizations/billable-units` with
+  `fromTimestamp`, `toTimestamp` and `granularity`.
+
+```text
+Querying billable units for the last 7 days (daily)...
+
+Usage recorded from: 2026-01-15T00:00:00Z
+
+Bucket                   Project                                  Total  Traces     Obs  Scores  Topics
+---------------------------------------------------------------------------------------------------------
+2026-11-18 00:00 UTC     proj-abc                                   42      20      15       5       2
+...
+
+7 rows returned.
+  Hour granularity: 168 rows
+  Week granularity: 1 rows
+  Month granularity: 1 rows
+  Default granularity:  7 rows
+```
+
+### `unstable_dashboard_widgets`
+
+Full CRUD lifecycle of a dashboard widget: create, get, list, update and
+delete. The widget is a horizontal bar chart of observations by name that is
+renamed, changed to a vertical bar and deleted.
+
+```sh
+cargo run --example unstable_dashboard_widgets --features unstable
+```
+
+- **Source:** [`examples/unstable/dashboard_widgets.rs`](https://github.com/lep511/langfuse-rust-sdk/blob/main/examples/unstable/dashboard_widgets.rs)
+- **Data:** writes one widget, deleted at the end.
+- **Needs:** the `unstable` feature.
+- **Calls:** `unstable_dashboard_widgets.create` / `get` / `list` / `update` /
+  `delete` (all under `/api/public/unstable/dashboard-widgets`).
+
+```text
+Creating a dashboard widget...
+  Created: Rust SDK example widget (id: <widget id>)
+  View:    Observations
+  Chart:   HorizontalBar
+
+Fetching the widget by id...
+  Name:        Rust SDK example widget
+  Description: Created by unstable_dashboard_widgets example
+  Dimensions:  [DashboardWidgetDimension { field: "name" }]
+  Metrics:     [DashboardWidgetMetric { measure: "count", agg: Count }]
+
+Listing dashboard widgets (first page)...
+  Page 1 of 1: 1 widgets
+
+Updating the widget name and chart type...
+  New name:  Rust SDK example widget (updated)
+  New chart: VerticalBar
+
+Deleting the widget...
+  Dashboard widget successfully deleted
+
+Done! Widget lifecycle complete.
+```
+
+### `unstable_dashboards`
+
+Full CRUD lifecycle of a dashboard: creates a widget, creates a dashboard,
+adds a full-width placement, resizes it, verifies the dashboard, then deletes
+the placement, dashboard and widget.
+
+```sh
+cargo run --example unstable_dashboards --features unstable
+```
+
+- **Source:** [`examples/unstable/dashboards.rs`](https://github.com/lep511/langfuse-rust-sdk/blob/main/examples/unstable/dashboards.rs)
+- **Data:** writes one widget and one dashboard, both deleted at the end.
+- **Needs:** the `unstable` feature.
+- **Calls:** `unstable_dashboard_widgets.create` / `delete`,
+  `unstable_dashboards.create` / `get` / `list` / `update` / `delete`,
+  `add_placement`, `update_placement`, `delete_placement`.
+
+```text
+Creating a widget for the dashboard...
+  Widget: Rust SDK dashboard example widget (id: <widget id>)
+
+Creating a dashboard...
+  Dashboard: Rust SDK example dashboard (id: <dashboard id>)
+  Placements: 0
+
+Listing dashboards (first page)...
+  1 dashboards on page 1
+
+Updating dashboard description...
+  Description: Updated by the Rust SDK
+
+Adding a widget placement...
+  Placed at x=0 y=0 (12x4), id=<placement id>
+
+Resizing the placement...
+  New height: 6
+
+Dashboard now has 1 placement(s).
+
+Deleting the placement...
+  Placement successfully deleted
+
+Deleting the dashboard...
+  Dashboard successfully deleted
+Deleting the widget...
+  Dashboard widget successfully deleted
+
+Done! Dashboard lifecycle complete.
+```
+
+### `unstable_topics`
+
+Explores the Topics API: lists facets, gets a facet, lists and gets topics,
+lists rules and gets a rule, lists summaries and assignments. Topics must be
+enabled on the project; when it is not, the example prints a message and
+exits cleanly.
+
+```sh
+cargo run --example unstable_topics --features unstable
+```
+
+- **Source:** [`examples/unstable/topics.rs`](https://github.com/lep511/langfuse-rust-sdk/blob/main/examples/unstable/topics.rs)
+- **Data:** read-only.
+- **Needs:** the `unstable` feature. Topics must be enabled on the project.
+- **Calls:** `unstable_topics.list_facets` / `get_facet` / `list` / `get` /
+  `list_rules` / `get_rule` / `list_summaries` / `list_assignments` (all under
+  `/api/public/unstable/topic-*` and `/api/public/unstable/topics`).
+
+When Topics is not enabled:
+
+```text
+Listing topic facets...
+  Topics is not available for this project: Topics is not available for this project.
+  Enable Topics in your Langfuse project settings to use this example.
+```
+
+When Topics is enabled:
+
+```text
+Listing topic facets...
+  2 facets (page 1 of 1)
+    - Default (id: <facet id>, active: true, built-in: true)
+    - Custom (id: <facet id>, active: true, built-in: false)
+
+Listing topics (last 7 days, by trace count)...
+  5 topics, window 2026-11-17 .. 2026-11-24
+
+Listing topic summaries (first page)...
+  5 summaries
+
+Done!
+```
+
+---
+
 ## Verification
 
-All 31 examples were built with `--all-features` and run on 2026-11-11
-against a test project on Langfuse Cloud (US region, server 4.78.0), with the
-library of SDK 0.11.2, which 0.11.3 leaves unchanged. The sample outputs above
-come from those runs. The claims in the doc
-comments and in this file were checked against the official documentation
+All 35 examples were built with `--all-features` and run on 2026-11-24
+against a test project on Langfuse Cloud (US region), with the library of
+SDK 0.11.4. The sample outputs above come from those runs. The claims in the
+doc comments and in this file were checked against the official documentation
 linked in each section and against `api/openapi.yml`.
 
 | Result | Examples |
 |---|---|
-| Passed end to end | the 27 examples not listed below |
-| Passed on the project-key path only | `organization_admin`, `scim_users`: the test key is project-scoped, so they printed the note about the missing organization key and exited successfully; the listing code did not run |
+| Passed end to end | the 27 original examples not listed below, plus `unstable_dashboard_widgets` and `unstable_dashboards` |
+| Passed on the project-key path only | `organization_admin`, `scim_users`, `unstable_billable_units`: the test key is project-scoped, so they printed the note about the missing organization key and exited successfully; the listing code did not run |
+| Passed on the graceful-exit path | `unstable_topics`: Topics is not available on the test project, so the example printed the note and exited cleanly |
 | Passed against a local OpenAI stub | `openai_tracing`: no `OPENAI_API_KEY` was available, so `OPENAI_BASE_URL` pointed at a local OpenAI-compatible stub. The resulting trace (agent, two generations, embedding) was read back from Langfuse |
 | Passed with a model named explicitly | `gateway_openai`: the test gateway's OpenAI route has no Claude 5.5, so the default run stops before the model call; with `GATEWAY_OPENAI_MODEL` set it completed |
 

@@ -17,11 +17,15 @@ pub struct PromptVersionClient {
 }
 
 /// Body of `PATCH /api/public/v2/prompts/{name}/versions/{version}`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePromptVersionRequest {
     /// New labels for the version. Labels are unique across versions; `latest` is reserved.
-    pub new_labels: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_labels: Option<Vec<String>>,
+    /// Labels to remove from the version; `latest` is reserved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remove_labels: Option<Vec<String>>,
 }
 
 impl PromptVersionClient {

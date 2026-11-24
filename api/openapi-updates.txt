@@ -29,3 +29,32 @@ Target: api/openapi.yml
 ==============================================================================
 
 No differences: api/openapi.yml is already up to date.
+
+==============================================================================
+2026-11-24 13:28:34 +0000
+Source: https://cloud.langfuse.com/generated/api/openapi.yml
+Target: api/openapi.yml
+==============================================================================
+
+New operations (1)
+  + GET /api/public/unstable/organizations/billable-units (unstable_billableUnits_get)
+
+New schemas (3)
+  + unstableBillableUnitsGranularity: enum hour, day, week, month
+  + unstableBillableUnitsRow: object with 7 properties
+  + unstableBillableUnitsResponse: object with 2 properties
+
+New properties (1)
+  + PATCH /api/public/v2/prompts/{name}/versions/{version} request body.removeLabels: array of string, nullable
+
+Changed (8)
+  ~ PATCH /api/public/v2/prompts/{name}/versions/{version} request body.newLabels: nullable (unset) -> true
+  ~ PATCH /api/public/v2/prompts/{name}/versions/{version} request body: no longer required: newLabels
+  ~ NullEvaluationRuleFilter.value: nullable true -> (unset)
+  ~ NullEvaluationRuleFilter: now required: value
+  ~ GET /api/public/v2/metrics: description changed
+  ~ GET /api/public/v2/observations query parameter `filter`: description changed
+  ~ NullEvaluationRuleFilter.value: description changed
+  ~ unstableDashboardWidgetFilter: description changed
+
+Operations: 120 -> 121 (21 -> 22 unstable), schemas: 331 -> 334

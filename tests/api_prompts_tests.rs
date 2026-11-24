@@ -234,7 +234,34 @@ async fn update_prompt_version_sends_new_labels() {
             "folder/greeter",
             2,
             &UpdatePromptVersionRequest {
-                new_labels: vec!["production".into()],
+                new_labels: Some(vec!["production".into()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(prompt, Prompt::Text { .. }));
+}
+
+#[tokio::test]
+async fn update_prompt_version_sends_remove_labels() {
+    let (client, server) = test_client().await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/public/v2/prompts/greeter/versions/3"))
+        .and(body_json(json!({"removeLabels": ["staging"]})))
+        .respond_with(json(200, text_prompt_json("greeter")))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let prompt = client
+        .prompt_versions
+        .update(
+            "greeter",
+            3,
+            &UpdatePromptVersionRequest {
+                remove_labels: Some(vec!["staging".into()]),
+                ..Default::default()
             },
         )
         .await

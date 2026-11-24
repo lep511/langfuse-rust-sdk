@@ -38,7 +38,7 @@ def scan(root):
 root = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
 methods = scan(root)
 
-UNSTABLE = {"unstable_dashboard_widgets.rs", "unstable_dashboards.rs", "unstable_topics.rs"}
+UNSTABLE = {"unstable_billable_units.rs", "unstable_dashboard_widgets.rs", "unstable_dashboards.rs", "unstable_topics.rs"}
 
 
 def top_level_uses(src):

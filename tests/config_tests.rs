@@ -363,6 +363,7 @@ fn retry_policy_jitter_stays_in_bounds() {
 fn unstable_sub_clients_exist_with_feature() {
     let config = ClientConfig::builder("pk-test", "sk-test").build().unwrap();
     let client = LangfuseClient::new(config).unwrap();
+    let _ = &client.unstable_billable_units;
     let _ = &client.unstable_dashboard_widgets;
     let _ = &client.unstable_dashboards;
     let _ = &client.unstable_topics;

@@ -1150,6 +1150,40 @@ pub mod traces {
     }
 }
 
+/// Blocking clients of [`crate::api::unstable_billable_units`].
+#[cfg(feature = "unstable")]
+pub mod unstable_billable_units {
+    #![allow(unused_imports)]
+    pub use crate::api::unstable_billable_units::*;
+    use crate::blocking::{BlockingPages, Runtime};
+    use crate::error::LangfuseError;
+    use crate::http::HttpClient;
+    use crate::models::unstable_billable_units::{BillableUnitsGranularity, BillableUnitsResponse};
+    use serde::Serialize;
+    use std::sync::Arc;
+
+    /// Blocking version of [`UnstableBillableUnitsClient`](crate::api::unstable_billable_units::UnstableBillableUnitsClient).
+    #[derive(Clone)]
+    pub struct UnstableBillableUnitsClient {
+        pub(crate) inner: crate::api::unstable_billable_units::UnstableBillableUnitsClient,
+        pub(crate) runtime: std::sync::Arc<Runtime>,
+    }
+
+    impl std::fmt::Debug for UnstableBillableUnitsClient {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("UnstableBillableUnitsClient")
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl UnstableBillableUnitsClient {
+        crate::blocking::blocking_methods! {
+            /// Blocking [`get`](crate::api::unstable_billable_units::UnstableBillableUnitsClient::get).
+            fn get(&self, params: &GetBillableUnitsParams) -> Result<BillableUnitsResponse, LangfuseError>;
+        }
+    }
+}
+
 /// Blocking clients of [`crate::api::unstable_dashboard_widgets`].
 #[cfg(feature = "unstable")]
 pub mod unstable_dashboard_widgets {
@@ -1385,6 +1419,9 @@ pub struct LangfuseClient {
     pub organizations: organizations::OrganizationsClient,
     /// SCIM 2.0 user provisioning.
     pub scim: scim::ScimClient,
+    /// *(unstable)* Organization billable units.
+    #[cfg(feature = "unstable")]
+    pub unstable_billable_units: unstable_billable_units::UnstableBillableUnitsClient,
     /// *(unstable)* Dashboard widget queries.
     #[cfg(feature = "unstable")]
     pub unstable_dashboard_widgets: unstable_dashboard_widgets::UnstableDashboardWidgetsClient,
@@ -1503,6 +1540,11 @@ impl LangfuseClient {
             },
             scim: scim::ScimClient {
                 inner: client.scim.clone(),
+                runtime: std::sync::Arc::clone(&runtime),
+            },
+            #[cfg(feature = "unstable")]
+            unstable_billable_units: unstable_billable_units::UnstableBillableUnitsClient {
+                inner: client.unstable_billable_units.clone(),
                 runtime: std::sync::Arc::clone(&runtime),
             },
             #[cfg(feature = "unstable")]

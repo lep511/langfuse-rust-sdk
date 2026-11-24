@@ -102,7 +102,8 @@ async fn main() -> Result<(), BoxError> {
                 PROMPT_NAME,
                 version_of(&v1),
                 &UpdatePromptVersionRequest {
-                    new_labels: vec!["production".into()],
+                    new_labels: Some(vec!["production".into()]),
+                    ..Default::default()
                 },
             )
             .await?;

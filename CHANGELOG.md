@@ -4,6 +4,25 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [0.11.4] - 2026-11-24
+
+`api/openapi.yml` follows the spec served by Langfuse Cloud on 2026-11-24.
+
+### Added
+
+- **Unstable**: `unstable_billable_units.get` — query an organization's
+  billable units per UTC time bucket and project
+  (`GET /api/public/unstable/organizations/billable-units`).
+- `UpdatePromptVersionRequest.remove_labels`: labels to remove from a prompt
+  version (`PATCH /api/public/v2/prompts/{name}/versions/{version}`).
+
+### Changed
+
+- `UpdatePromptVersionRequest.new_labels` is now `Option<Vec<String>>`
+  (previously required `Vec<String>`). Callers that wrote the struct literal
+  must add `..Default::default()`.
+- Operation count: 121 operations (22 unstable), up from 120 (21 unstable).
+
 ## [0.11.3] - 2026-11-11
 
 Examples and their documentation only; the library is unchanged. All 31

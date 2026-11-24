@@ -147,6 +147,26 @@ required-features = ["openai"]
 name = "blocking"
 required-features = ["blocking"]
 
+[[example]]
+name = "unstable_billable_units"
+path = "examples/unstable/billable_units.rs"
+required-features = ["unstable"]
+
+[[example]]
+name = "unstable_dashboard_widgets"
+path = "examples/unstable/dashboard_widgets.rs"
+required-features = ["unstable"]
+
+[[example]]
+name = "unstable_dashboards"
+path = "examples/unstable/dashboards.rs"
+required-features = ["unstable"]
+
+[[example]]
+name = "unstable_topics"
+path = "examples/unstable/topics.rs"
+required-features = ["unstable"]
+
 # Development builds carry no debuginfo: it made up ~95% of every test and
 # example binary (236 MB -> 10 MB each) and `target/` grew past 50 GB.
 # Panic messages keep their file:line; backtrace frames keep their names but

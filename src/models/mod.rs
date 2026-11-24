@@ -34,6 +34,8 @@ pub mod scores;
 pub mod skills;
 pub mod traces;
 #[cfg(feature = "unstable")]
+pub mod unstable_billable_units;
+#[cfg(feature = "unstable")]
 pub mod unstable_common;
 #[cfg(feature = "unstable")]
 pub mod unstable_dashboard_widgets;

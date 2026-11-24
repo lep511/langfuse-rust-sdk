@@ -698,7 +698,8 @@ async fn create_update_and_delete_invalidate_the_prompt() {
             "greeting",
             2,
             &UpdatePromptVersionRequest {
-                new_labels: vec!["production".into()],
+                new_labels: Some(vec!["production".into()]),
+                ..Default::default()
             },
         )
         .await

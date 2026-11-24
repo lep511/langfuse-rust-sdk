@@ -4,7 +4,7 @@ Rust SDK for the [Langfuse](https://langfuse.com) LLM observability API.
 
 ## Features
 
-- Covers all 120 operations of the Langfuse public API (`openapi.yml`); the 21 unstable ones are behind the `unstable` feature
+- Covers all 121 operations of the Langfuse public API (`openapi.yml`); the 22 unstable ones are behind the `unstable` feature
 - Async API built on `reqwest` + `tokio`, plus a blocking client for programs without a runtime (feature `blocking`)
 - Typed models with `serde`, including tagged unions (`ScoreV3` on `dataType`, `Prompt` on `type`, `Evaluator` on `type`, ...)
 - Response enums tolerate new server values (`Unknown` variant)

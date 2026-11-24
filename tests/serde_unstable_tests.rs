@@ -26,6 +26,21 @@ fn assert_serialized<T: Serialize + std::fmt::Debug>(cases: &[(T, &str)]) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  Billable units
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn billable_units_granularity_serializes() {
+    use langfuse_rust_sdk::models::unstable_billable_units::BillableUnitsGranularity;
+    assert_serialized(&[
+        (BillableUnitsGranularity::Hour, "hour"),
+        (BillableUnitsGranularity::Day, "day"),
+        (BillableUnitsGranularity::Week, "week"),
+        (BillableUnitsGranularity::Month, "month"),
+    ]);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  Dashboard widgets
 // ═══════════════════════════════════════════════════════════════════════
 

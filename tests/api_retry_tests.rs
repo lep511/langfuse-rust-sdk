@@ -146,7 +146,8 @@ async fn patch_server_error_is_not_retried() {
         .await;
 
     let req = UpdatePromptVersionRequest {
-        new_labels: vec!["production".into()],
+        new_labels: Some(vec!["production".into()]),
+        ..Default::default()
     };
     assert!(client.prompt_versions.update("p", 1, &req).await.is_err());
 }
