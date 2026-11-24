@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 (2026-11-24)
+
+Updated to `langfuse-rust-sdk` 0.11.4 (OpenAPI spec of 2026-11-24).
+
+- **New:** `unstable-billable-units get` — query an organization's billable
+  units per UTC time bucket and project (unstable, organization-scoped key).
+- **Changed:** `prompts update-version` — `--new-labels` is no longer
+  required (was required unless `--body-json`/`--body-file`), and
+  `--remove-labels` is now supported.
+- Operation count: 121 (was 120).
+
 ## 0.2.0 (2026-11-12)
 
 The result of an audit of how the CLI uses Rust

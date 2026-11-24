@@ -1,6 +1,6 @@
 [package]
 name = "langfuse-rust-cli"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.99"
 description = "Command-line client for the Langfuse API, built on langfuse-rust-sdk"
@@ -33,7 +33,7 @@ clap_complete = "4.6"
 comfy-table = { version = "8", default-features = false }
 dotenvy = "0.15"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
-langfuse-rust-sdk = "0.11.3"
+langfuse-rust-sdk = "0.11.4"
 percent-encoding = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }

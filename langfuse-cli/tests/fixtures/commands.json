@@ -794,6 +794,12 @@
     ]
   },
   {
+    "operationId": "unstable_billableUnits_get",
+    "key": "GET /api/public/unstable/organizations/billable-units",
+    "resource": "unstable-billable-units",
+    "action": "get"
+  },
+  {
     "operationId": "unstable_dashboardWidgets_create",
     "key": "POST /api/public/unstable/dashboard-widgets",
     "resource": "unstable-dashboard-widgets",

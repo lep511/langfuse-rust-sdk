@@ -136,7 +136,7 @@ async fn usage_errors_are_exit_2_with_suggestions() {
 async fn versions_and_schema() {
     let output = run(&["api", "versions"]).await;
     assert_eq!(output.exit, Exit::Success);
-    assert!(output.stdout.contains("OpenAPI spec of 2026-11-11"));
+    assert!(output.stdout.contains("OpenAPI spec of 2026-11-24"));
 
     let output = run(&["--json", "api", "schema"]).await;
     assert_eq!(output.exit, Exit::Success);

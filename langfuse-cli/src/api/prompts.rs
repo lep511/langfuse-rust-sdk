@@ -313,13 +313,11 @@ pub struct UpdateVersion {
 #[command(next_help_heading = "Request body")]
 struct UpdateVersionFields {
     /// New label of the version (repeatable, or one JSON array); `latest` is reserved
-    #[arg(
-        long = "new-labels",
-        alias = "new-label",
-        value_name = "LABEL",
-        required_unless_present_any = ["body_json", "body_file"]
-    )]
+    #[arg(long = "new-labels", alias = "new-label", value_name = "LABEL")]
     new_labels: Vec<String>,
+    /// Label to remove from the version (repeatable, or one JSON array); `latest` is reserved
+    #[arg(long = "remove-labels", alias = "remove-label", value_name = "LABEL")]
+    remove_labels: Vec<String>,
 }
 
 impl Operation for UpdateVersion {
@@ -338,9 +336,22 @@ impl Operation for UpdateVersion {
             .path_param("version", self.version);
         match self.body.read(ctx)? {
             Some(body) => Ok(request.body(body)),
-            None => request.body_from(&UpdatePromptVersionRequest {
-                new_labels: expand_strings("new-labels", &self.fields.new_labels)?,
-            }),
+            None => {
+                let new_labels = if self.fields.new_labels.is_empty() {
+                    None
+                } else {
+                    Some(expand_strings("new-labels", &self.fields.new_labels)?)
+                };
+                let remove_labels = if self.fields.remove_labels.is_empty() {
+                    None
+                } else {
+                    Some(expand_strings("remove-labels", &self.fields.remove_labels)?)
+                };
+                request.body_from(&UpdatePromptVersionRequest {
+                    new_labels,
+                    remove_labels,
+                })
+            }
         }
     }
 }

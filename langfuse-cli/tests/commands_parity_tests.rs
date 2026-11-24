@@ -43,7 +43,7 @@ fn commands(entries: &[Value]) -> BTreeMap<String, Command> {
 async fn every_operation_has_the_official_command_name() {
     let fixture: Vec<Value> = serde_json::from_str(include_str!("fixtures/commands.json")).unwrap();
     let expected = commands(&fixture);
-    assert_eq!(expected.len(), 120);
+    assert_eq!(expected.len(), 121);
 
     let schema = common::run(&["--json", "api", "schema"]).await.json();
     let mut actual_entries = Vec::new();

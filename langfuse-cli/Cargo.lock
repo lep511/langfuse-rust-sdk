@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "langfuse-rust-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "assert_cmd",
  "base64 0.22.1",
@@ -879,9 +879,9 @@ dependencies = [
 
 [[package]]
 name = "langfuse-rust-sdk"
-version = "0.11.3"
+version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01862c49658576de5377ce727d2437fb889d3ae704cd36b2589bd0680e500ee2"
+checksum = "715d22b46ad3c7be3b830dd569dd3f50daeddec4cb4285ecc5c616792659e514"
 dependencies = [
  "base64 0.22.1",
  "chrono",

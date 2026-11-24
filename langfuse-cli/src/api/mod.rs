@@ -274,6 +274,8 @@ pub mod scores;
 pub mod skills;
 pub mod traces;
 #[cfg(feature = "unstable")]
+pub mod unstable_billable_units;
+#[cfg(feature = "unstable")]
 pub mod unstable_dashboard_widgets;
 #[cfg(feature = "unstable")]
 pub mod unstable_dashboards;
@@ -356,6 +358,8 @@ resources! {
         Traces(traces::Command),
     }
     unstable {
+        /// Organization billable units (unstable API, organization-scoped key)
+        UnstableBillableUnits(unstable_billable_units::Command),
         /// Dashboard widgets: standalone chart definitions (unstable API)
         UnstableDashboardWidgets(unstable_dashboard_widgets::Command),
         /// Dashboards and their placements (unstable API)
@@ -464,7 +468,7 @@ pub enum VersionsAction {
 
 /// The API spec this CLI implements.
 pub const SPEC: &str =
-    "OpenAPI spec of 2026-11-11 (Langfuse 4.71.0 and later), via langfuse-rust-sdk";
+    "OpenAPI spec of 2026-11-24 (Langfuse 4.71.0 and later), via langfuse-rust-sdk";
 
 /// Run `langfuse api …`.
 pub async fn run(api: &ApiArgs, globals: &GlobalArgs, io: &mut Io<'_>) -> Result<Exit> {

@@ -109,6 +109,6 @@ async fn every_operation_fills_its_path_parameters() {
             checked += 1;
         }
     }
-    let operations = if cfg!(feature = "unstable") { 120 } else { 99 };
+    let operations = if cfg!(feature = "unstable") { 121 } else { 99 };
     assert_eq!(checked, operations);
 }

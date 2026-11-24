@@ -16,7 +16,7 @@ use crate::error::{CliError, Exit, Result, error_chain};
 use crate::operation::{HttpMethod, PreparedRequest, ResponseKind};
 
 /// Version of the SDK this CLI is built on (sent as `x-langfuse-sdk-version`).
-pub const SDK_VERSION: &str = "0.11.3";
+pub const SDK_VERSION: &str = "0.11.4";
 
 /// The outcome of an API call that reached the server.
 #[derive(Debug, Clone)]
